@@ -1,4 +1,8 @@
 # Databricks notebook source
+# /// script
+# [tool.databricks.environment]
+# environment_version = "5"
+# ///
 # MAGIC %md
 # MAGIC # Phase 1b — H3 Indexing and the Exposure Join
 # MAGIC
@@ -148,7 +152,11 @@ print(f"Working in {CATALOG}.{SCHEMA} at H3 resolution {H3_RES}")
 # MAGIC )
 # MAGIC SELECT
 # MAGIC   fire_poly_id,
-# MAGIC   COALESCE(firekey_raw, CONCAT('poly_', CAST(fire_poly_id AS STRING))) AS fire_key,
+# MAGIC   COALESCE(
+# MAGIC   firekey_raw,
+# MAGIC   CONCAT('fno_', CAST(season AS STRING), '_', fire_number),
+# MAGIC   CONCAT('poly_', CAST(fire_poly_id AS STRING))
+# MAGIC   ) AS fire_key,
 # MAGIC   firekey_raw,
 # MAGIC   season, start_date, fire_type, fire_name, fire_number, area_ha,
 # MAGIC   treatment_type, ffm_district, ffm_region, accuracy, cause_raw,
@@ -204,6 +212,24 @@ print(f"Working in {CATALOG}.{SCHEMA} at H3 resolution {H3_RES}")
 # MAGIC   COUNT_IF(firekey_raw IS NULL) AS polygons_without_firekey,
 # MAGIC   ROUND(COUNT(*) / COUNT(DISTINCT fire_key), 1) AS polygons_per_fire
 # MAGIC FROM workspace.bushfire.prep_fire;
+
+# COMMAND ----------
+
+# MAGIC %sql
+# MAGIC SELECT
+# MAGIC   COUNT(*) AS null_firekey_polys,
+# MAGIC   COUNT(DISTINCT fire_number) AS distinct_fire_no,
+# MAGIC   COUNT_IF(fire_number IS NULL) AS also_null_fire_no,
+# MAGIC   COUNT(DISTINCT CONCAT(COALESCE(fire_name,'?'), '|', CAST(season AS STRING))) AS distinct_name_season
+# MAGIC FROM workspace.bushfire.prep_fire
+# MAGIC WHERE firekey_raw IS NULL;
+
+# COMMAND ----------
+
+# MAGIC %sql
+# MAGIC SELECT fire_type, COUNT(*) AS polys, COUNT_IF(firekey_raw IS NULL) AS no_key
+# MAGIC FROM workspace.bushfire.prep_fire
+# MAGIC GROUP BY fire_type;
 
 # COMMAND ----------
 
@@ -375,6 +401,8 @@ print(f"Working in {CATALOG}.{SCHEMA} at H3 resolution {H3_RES}")
 # MAGIC   COUNT(DISTINCT CASE WHEN f.season >= 2006 THEN f.fire_key END) AS times_burnt_last_20yr,
 # MAGIC   COUNT(DISTINCT CASE WHEN f.season >= 2006 AND f.fire_type = 'Bushfire'
 # MAGIC                       THEN f.fire_key END) AS times_bushfire_last_20yr,
+# MAGIC   COUNT(DISTINCT CASE WHEN f.fire_type = 'Bushfire' AND f.area_ha >= 1000
+# MAGIC                       THEN f.fire_key END) AS times_major_bushfire,
 # MAGIC
 # MAGIC   MAX(f.season) AS last_burn_season,
 # MAGIC   MAX(CASE WHEN f.fire_type = 'Bushfire' THEN f.season END) AS last_bushfire_season,
@@ -423,6 +451,7 @@ print(f"Working in {CATALOG}.{SCHEMA} at H3 resolution {H3_RES}")
 # MAGIC   COALESCE(fs.times_bushfire_since_1980, 0) AS times_bushfire_since_1980,
 # MAGIC   COALESCE(fs.times_burnt_last_20yr,     0) AS times_burnt_last_20yr,
 # MAGIC   COALESCE(fs.times_bushfire_last_20yr,  0) AS times_bushfire_last_20yr,
+# MAGIC   COALESCE(fs.times_major_bushfire,      0) AS times_major_bushfire,
 # MAGIC
 # MAGIC   fs.last_burn_season,
 # MAGIC   fs.last_bushfire_season,
@@ -436,9 +465,9 @@ print(f"Working in {CATALOG}.{SCHEMA} at H3 resolution {H3_RES}")
 # MAGIC   COALESCE(fs.powerline_caused_fires, 0) AS powerline_caused_fires,
 # MAGIC   fs.last_powerline_caused_season,
 # MAGIC
-# MAGIC   CASE WHEN COALESCE(fs.times_bushfire_since_1980, 0) = 0 THEN 'None'
-# MAGIC        WHEN fs.times_bushfire_since_1980 = 1              THEN 'Low'
-# MAGIC        WHEN fs.times_bushfire_since_1980 <= 3             THEN 'Moderate'
+# MAGIC   CASE WHEN COALESCE(fs.times_major_bushfire, 0) = 0 THEN 'None'
+# MAGIC        WHEN fs.times_major_bushfire = 1              THEN 'Low'
+# MAGIC        WHEN fs.times_major_bushfire <= 3             THEN 'Moderate'
 # MAGIC        ELSE 'High'
 # MAGIC   END AS bushfire_exposure_band
 # MAGIC
@@ -530,10 +559,41 @@ print(f"Working in {CATALOG}.{SCHEMA} at H3 resolution {H3_RES}")
 
 # COMMAND ----------
 
+# MAGIC %sql
+# MAGIC SELECT lga_name, voltage_class, COUNT(*) AS segments
+# MAGIC FROM workspace.bushfire.gold_segment_exposure
+# MAGIC WHERE bushfire_exposure_band = 'High'
+# MAGIC GROUP BY lga_name, voltage_class
+# MAGIC ORDER BY segments DESC
+# MAGIC LIMIT 15;
+
+# COMMAND ----------
+
 # MAGIC %md
 # MAGIC **Check 6 — the SEASON assumption.** Compare `START_DATE` year against `SEASON`.
 # MAGIC If they differ consistently by one, seasons are labelled by their ending year and
 # MAGIC the 1980 and 2006 boundaries need shifting.
+
+# COMMAND ----------
+
+# MAGIC %sql
+# MAGIC SELECT g.lga_name, g.segment_id, g.times_bushfire_since_1980,
+# MAGIC        g.largest_fire_area_ha, g.most_recent_fire_name, g.last_bushfire_season
+# MAGIC FROM workspace.bushfire.gold_segment_exposure g
+# MAGIC WHERE g.lga_name IN ('FRANKSTON','BRIMBANK')
+# MAGIC   AND g.bushfire_exposure_band = 'High'
+# MAGIC LIMIT 10;
+
+# COMMAND ----------
+
+# MAGIC %sql
+# MAGIC SELECT fire_key, fire_name, COUNT(*) AS polys,
+# MAGIC        ROUND(MAX(area_ha),1) AS max_area, ROUND(SUM(area_ha),1) AS sum_area
+# MAGIC FROM workspace.bushfire.prep_fire
+# MAGIC WHERE season = 2020 AND fire_type = 'Bushfire'
+# MAGIC GROUP BY fire_key, fire_name
+# MAGIC ORDER BY sum_area DESC
+# MAGIC LIMIT 10;
 
 # COMMAND ----------
 
