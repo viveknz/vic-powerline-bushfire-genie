@@ -2,12 +2,12 @@
 # MAGIC %md
 # MAGIC # Phase 1b — H3 Indexing and the Exposure Join
 # MAGIC
-# MAGIC Notebook 03. Turns three geometry layers into one flat table with no geometry
-# MAGIC column, where every spatial fact has already become an ordinary number.
+# MAGIC Notebook 03, revision 2. Turns three geometry layers into one flat table with no
+# MAGIC geometry column, where every spatial fact has become an ordinary number.
 # MAGIC
 # MAGIC That table is what Genie reads. Genie never touches geometry, never generates
-# MAGIC spatial SQL, and never has to reason about coordinate systems. It answers
-# MAGIC questions with plain aggregation, which it does reliably.
+# MAGIC spatial SQL, and never reasons about coordinate systems. It answers questions with
+# MAGIC plain aggregation, which it does reliably.
 # MAGIC
 # MAGIC **Input:** `bronze_lga`, `bronze_power_line`, `bronze_fire_scar`
 # MAGIC **Output:** `gold_segment_exposure`
@@ -15,36 +15,49 @@
 # COMMAND ----------
 
 # MAGIC %md
+# MAGIC ## What changed in revision 2
+# MAGIC
+# MAGIC Three corrections, all found by checking the source before trusting it.
+# MAGIC
+# MAGIC **1. Count fires, not polygons.** `FIREKEY` has 7,649 distinct values across
+# MAGIC 109,219 rows — roughly 14 polygons per fire. One fire is mapped as many separate
+# MAGIC fragments: burnt patches, unburnt islands, multi-day mapping.
+# MAGIC
+# MAGIC Counting rows would give a segment inside one large fire a score of 14 instead of
+# MAGIC 1. Every "times burnt" number in the app would be inflated, and nothing would look
+# MAGIC wrong. Fixed by counting distinct `FIREKEY`.
+# MAGIC
+# MAGIC **2. Real keys instead of surrogates.** `UFI` is unique across all 396,455 power
+# MAGIC line rows, so segments can be traced back to Vicmap.
+# MAGIC
+# MAGIC **3. The 'None' string problem.** Ingestion cast object columns with
+# MAGIC `astype(str)`, which turned Python nulls into the literal string `'None'`. So
+# MAGIC `CAUSE IS NULL` matches nothing and `COALESCE(CAUSE, '')` does not help. Every
+# MAGIC string column needs `NULLIF(col, 'None')` before use.
+# MAGIC
+# MAGIC This one is worth remembering. It is invisible until a count comes back wrong.
+# MAGIC
+# MAGIC Also added: `AREA_HA` (fire size) and `NAME` (fire name). `GEOMETRY_C` was dropped
+# MAGIC after inspection — it holds dates, half of them null, some corrupted.
+
+# COMMAND ----------
+
+# MAGIC %md
 # MAGIC ## How the join works
 # MAGIC
-# MAGIC The real question is "which fire scars intersect which line segments". Done as
-# MAGIC polygon-to-line intersection across 109k polygons and 396k lines, that is
-# MAGIC expensive and fragile.
-# MAGIC
-# MAGIC H3 turns it into an integer join:
-# MAGIC
 # MAGIC ```
-# MAGIC power line  ──h3_coverash3──>  cells ─┐
-# MAGIC                                        ├──> join on cell ──> (segment, fire) pairs
-# MAGIC fire scar   ──h3_coverash3──>  cells ─┘
+# MAGIC power line  --h3_coverash3-->  cells --+
+# MAGIC                                        +--> join on cell --> (segment, fire) pairs
+# MAGIC fire scar   --h3_coverash3-->  cells --+
 # MAGIC ```
 # MAGIC
-# MAGIC Two geometries that share an H3 cell are within roughly 460 m of each other at
-# MAGIC resolution 8. For a risk screening tool that is the right tolerance — it is
-# MAGIC comparable to the accuracy the source data actually has.
+# MAGIC Two geometries sharing an H3 cell are within roughly 460 m at resolution 8. For a
+# MAGIC risk screening tool that matches the accuracy the source data actually has.
 # MAGIC
-# MAGIC ### Why cover and not polyfill
-# MAGIC
-# MAGIC `h3_polyfillash3` returns only cells whose **centre** falls inside the geometry.
-# MAGIC Anything smaller than a cell returns nothing. Tested on the LGA layer at
-# MAGIC resolution 7, three of the first five councils came back with zero cells.
-# MAGIC
-# MAGIC `h3_coverash3` returns every cell the geometry touches, so nothing disappears.
-# MAGIC That matters more than it sounds: a fire scar that vanishes is not an error, it
-# MAGIC is a wrong answer nobody notices.
-# MAGIC
-# MAGIC Lines have no interior at all, so polyfill on the power layer would be close to
-# MAGIC useless.
+# MAGIC `h3_coverash3` rather than `h3_polyfillash3` because polyfill returns only cells
+# MAGIC whose centre is inside the geometry — anything smaller than a cell disappears
+# MAGIC silently. Lines have no interior at all, so polyfill would be near useless on the
+# MAGIC power layer.
 
 # COMMAND ----------
 
@@ -60,62 +73,30 @@ print(f"Working in {CATALOG}.{SCHEMA} at H3 resolution {H3_RES}")
 # COMMAND ----------
 
 # MAGIC %md
-# MAGIC ## Step 0 — Check what columns we actually have
+# MAGIC ## Step 1 — Prep tables
 # MAGIC
-# MAGIC Run this before anything else. The code below references specific column names
-# MAGIC and this is where you find out if any are missing or spelled differently.
+# MAGIC ### 1a. Segments
 # MAGIC
-# MAGIC Shapefile truncates field names to 10 characters, so `FFM_DISTRICT` arrives as
-# MAGIC `FFM_DISTRI`. Check the `*_column_names.txt` files from DataShare if anything
-# MAGIC looks odd.
-
-# COMMAND ----------
-
-# MAGIC %sql
-# MAGIC DESCRIBE workspace.bushfire.bronze_power_line;
-
-# COMMAND ----------
-
-# MAGIC %sql
-# MAGIC DESCRIBE workspace.bushfire.bronze_fire_scar;
-
-# COMMAND ----------
-
-# MAGIC %md
-# MAGIC ## Step 1 — Prep tables with stable surrogate keys
-# MAGIC
-# MAGIC Every segment and every fire needs an identifier that survives the joins. Rather
-# MAGIC than assume `UFI` exists and is unique on both layers, generate one and
-# MAGIC materialise it. Once written, the ids are stable.
-# MAGIC
-# MAGIC ### Filters applied here
-# MAGIC
-# MAGIC **Power lines: LV excluded.** LV is 237,187 of 396,455 rows — 60% of the layer —
-# MAGIC and it is largely urban, short-span, often underground. Bushfire risk lives in HV
-# MAGIC and SWER through forested country. Excluding it halves the H3 work.
-# MAGIC
-# MAGIC To include LV later, delete one line from the WHERE clause. Bronze still holds
-# MAGIC everything.
-# MAGIC
-# MAGIC **Fire scars: none.** All 109,219 rows, back to 1903. The bushfire and planned
-# MAGIC burn split happens at aggregation time, not here.
+# MAGIC **LV excluded.** 237,187 of 396,455 rows, 60% of the layer, largely urban and
+# MAGIC short-span. Bushfire risk lives in HV and SWER through forested country. To
+# MAGIC include it later, delete the WHERE clause — bronze still holds everything.
 
 # COMMAND ----------
 
 # MAGIC %sql
 # MAGIC CREATE OR REPLACE TABLE workspace.bushfire.prep_segment AS
 # MAGIC SELECT
-# MAGIC   monotonically_increasing_id()                AS segment_id,
-# MAGIC   VOLTAGE                                      AS voltage,
-# MAGIC   FEATSUBTYP                                   AS feature_subtype,
+# MAGIC   UFI                                        AS segment_id,
+# MAGIC   VOLTAGE                                    AS voltage,
+# MAGIC   FEATSUBTYP                                 AS feature_subtype,
 # MAGIC   CASE
-# MAGIC     WHEN FEATSUBTYP = 'power transmission'     THEN 'Transmission'
-# MAGIC     WHEN FEATSUBTYP = 'power distribution hv'  THEN 'HV Distribution'
-# MAGIC     WHEN FEATSUBTYP = 'power distribution lv'  THEN 'LV Distribution'
+# MAGIC     WHEN FEATSUBTYP = 'power transmission'    THEN 'Transmission'
+# MAGIC     WHEN FEATSUBTYP = 'power distribution hv' THEN 'HV Distribution'
+# MAGIC     WHEN FEATSUBTYP = 'power distribution lv' THEN 'LV Distribution'
 # MAGIC     ELSE 'Unknown'
-# MAGIC   END                                          AS voltage_class,
+# MAGIC   END                                        AS voltage_class,
 # MAGIC   CASE WHEN VOLTAGE = '12.7 KV' THEN TRUE ELSE FALSE END AS is_swer,
-# MAGIC   AUTH_ORG_C                                   AS distributor_code,
+# MAGIC   AUTH_ORG_C                                 AS distributor_code,
 # MAGIC   geom_wkb
 # MAGIC FROM workspace.bushfire.bronze_power_line
 # MAGIC WHERE FEATSUBTYP <> 'power distribution lv';
@@ -123,18 +104,20 @@ print(f"Working in {CATALOG}.{SCHEMA} at H3 resolution {H3_RES}")
 # COMMAND ----------
 
 # MAGIC %md
-# MAGIC ### Fire prep, with the CAUSE cleanup
+# MAGIC ### 1b. Fires
 # MAGIC
-# MAGIC Two problems in the source, both found during profiling:
+# MAGIC Three jobs in this cell.
 # MAGIC
-# MAGIC **Duplicate category labels.** The same cause appears hyphenated, comma-separated
-# MAGIC and in one case all caps. Left alone, Genie splits counts across the variants and
-# MAGIC reports "Power Lines: 17" when the true figure is 28.
+# MAGIC **`fire_key`** groups polygons belonging to the same fire. Where `FIREKEY` is
+# MAGIC missing, the polygon id stands in so the fire still counts once rather than
+# MAGIC vanishing from a `COUNT(DISTINCT)`.
 # MAGIC
-# MAGIC **97% null.** Cause is only recorded for investigated fires. This is stated in the
-# MAGIC Genie instructions so it qualifies rather than generalising from a 3% sample.
+# MAGIC **`cause_group`** collapses the duplicate labels. The source has the same cause
+# MAGIC written several ways — hyphenated, comma-separated, one in all caps. Left alone,
+# MAGIC Genie splits counts across the variants and reports "Power Lines: 17" when the
+# MAGIC true figure is 28.
 # MAGIC
-# MAGIC The normalisation below collapses everything to a handful of clean groups.
+# MAGIC **`NULLIF(col, 'None')`** everywhere, for the string-null problem described above.
 
 # COMMAND ----------
 
@@ -142,25 +125,33 @@ print(f"Working in {CATALOG}.{SCHEMA} at H3 resolution {H3_RES}")
 # MAGIC CREATE OR REPLACE TABLE workspace.bushfire.prep_fire AS
 # MAGIC WITH cleaned AS (
 # MAGIC   SELECT
-# MAGIC     monotonically_increasing_id() AS fire_id,
-# MAGIC     CAST(SEASON AS INT)           AS season,
-# MAGIC     START_DATE                    AS start_date,
-# MAGIC     FIRETYPE                      AS fire_type,
-# MAGIC     TREAT_TYPE                    AS treatment_type,
-# MAGIC     FFM_DISTRI                    AS ffm_district,
-# MAGIC     FFM_REGION                    AS ffm_region,
-# MAGIC     ACCURACY                      AS accuracy,
-# MAGIC     -- normalise: uppercase, strip punctuation, collapse whitespace
+# MAGIC     monotonically_increasing_id()               AS fire_poly_id,
+# MAGIC     NULLIF(TRIM(FIREKEY), 'None')               AS firekey_raw,
+# MAGIC     CAST(SEASON AS INT)                         AS season,
+# MAGIC     START_DATE                                  AS start_date,
+# MAGIC     NULLIF(TRIM(FIRETYPE), 'None')              AS fire_type,
+# MAGIC     NULLIF(TRIM(NAME), 'None')                  AS fire_name,
+# MAGIC     NULLIF(TRIM(FIRE_NO), 'None')               AS fire_number,
+# MAGIC     CAST(AREA_HA AS DOUBLE)                     AS area_ha,
+# MAGIC     NULLIF(TRIM(TREAT_TYPE), 'None')            AS treatment_type,
+# MAGIC     NULLIF(TRIM(FFM_DISTRI), 'None')            AS ffm_district,
+# MAGIC     NULLIF(TRIM(FFM_REGION), 'None')            AS ffm_region,
+# MAGIC     NULLIF(TRIM(ACCURACY), 'None')              AS accuracy,
+# MAGIC     NULLIF(TRIM(CAUSE), 'None')                 AS cause_raw,
 # MAGIC     REGEXP_REPLACE(
-# MAGIC       REGEXP_REPLACE(UPPER(TRIM(COALESCE(CAUSE, ''))), '[-,()]', ' '),
-# MAGIC       '\\s+', ' '
-# MAGIC     )                             AS cause_norm,
-# MAGIC     CAUSE                         AS cause_raw,
+# MAGIC       REGEXP_REPLACE(
+# MAGIC         UPPER(TRIM(COALESCE(NULLIF(TRIM(CAUSE), 'None'), ''))),
+# MAGIC         '[-,()]', ' '),
+# MAGIC       '\\s+', ' ')                              AS cause_norm,
 # MAGIC     geom_wkb
 # MAGIC   FROM workspace.bushfire.bronze_fire_scar
 # MAGIC )
 # MAGIC SELECT
-# MAGIC   *,
+# MAGIC   fire_poly_id,
+# MAGIC   COALESCE(firekey_raw, CONCAT('poly_', CAST(fire_poly_id AS STRING))) AS fire_key,
+# MAGIC   firekey_raw,
+# MAGIC   season, start_date, fire_type, fire_name, fire_number, area_ha,
+# MAGIC   treatment_type, ffm_district, ffm_region, accuracy, cause_raw,
 # MAGIC   CASE
 # MAGIC     WHEN cause_norm = ''                              THEN 'Not recorded'
 # MAGIC     WHEN cause_norm LIKE '%POWER%'                    THEN 'Powerline'
@@ -180,42 +171,55 @@ print(f"Working in {CATALOG}.{SCHEMA} at H3 resolution {H3_RES}")
 # MAGIC     WHEN cause_norm = 'UNKNOWN'                       THEN 'Unknown'
 # MAGIC     ELSE 'Other'
 # MAGIC   END AS cause_group,
-# MAGIC   CASE WHEN cause_norm LIKE '%POWER%' THEN TRUE ELSE FALSE END AS powerline_caused
+# MAGIC   CASE WHEN cause_norm LIKE '%POWER%' THEN TRUE ELSE FALSE END AS powerline_caused,
+# MAGIC   geom_wkb
 # MAGIC FROM cleaned;
 
 # COMMAND ----------
 
 # MAGIC %md
-# MAGIC Check the cleanup worked. Powerline should now total 28 across all four original
-# MAGIC label variants, not 17.
+# MAGIC **Check the cleanup worked.** Powerline should total 28 polygons — four source
+# MAGIC labels collapsing into one. If it says 17, the `'None'` handling did not take.
 
 # COMMAND ----------
 
 # MAGIC %sql
-# MAGIC SELECT cause_group, COUNT(*) AS n
+# MAGIC SELECT cause_group, COUNT(*) AS polygons, COUNT(DISTINCT fire_key) AS fires
 # MAGIC FROM workspace.bushfire.prep_fire
 # MAGIC GROUP BY cause_group
-# MAGIC ORDER BY n DESC;
+# MAGIC ORDER BY polygons DESC;
 
 # COMMAND ----------
 
 # MAGIC %md
-# MAGIC ### LGA prep
+# MAGIC **Confirm the polygon-to-fire ratio.** Expect roughly 109,219 polygons against
+# MAGIC 7,649 fire keys. This ratio is what justifies counting distinct fires.
+
+# COMMAND ----------
+
+# MAGIC %sql
+# MAGIC SELECT
+# MAGIC   COUNT(*)                      AS polygons,
+# MAGIC   COUNT(DISTINCT fire_key)      AS distinct_fires,
+# MAGIC   COUNT_IF(firekey_raw IS NULL) AS polygons_without_firekey,
+# MAGIC   ROUND(COUNT(*) / COUNT(DISTINCT fire_key), 1) AS polygons_per_fire
+# MAGIC FROM workspace.bushfire.prep_fire;
+
+# COMMAND ----------
+
+# MAGIC %md
+# MAGIC ### 1c. LGA boundaries
 # MAGIC
-# MAGIC Three corrections, all from the profiling findings:
-# MAGIC
-# MAGIC **Filter to VIC.** 44 of 137 rows are NSW or SA — councils that touch Victoria
-# MAGIC along the Murray and the SA border. A Victorian line near the border could
-# MAGIC otherwise be attributed to Albury.
+# MAGIC **Filter to VIC.** 44 of 137 rows are NSW or SA — councils touching Victoria along
+# MAGIC the Murray and the SA border. Without this a Victorian line near the border could
+# MAGIC be attributed to Albury.
 # MAGIC
 # MAGIC **Flag non-councils.** Six alpine resorts and two island groups sit alongside the
-# MAGIC 79 councils. They are kept, because alpine resorts are high fire risk country with
-# MAGIC network infrastructure. The flag lets Genie include or exclude them on request.
+# MAGIC 79 councils. Kept, because alpine resorts are high fire risk country with network
+# MAGIC infrastructure. The flag lets Genie include or exclude them on request.
 # MAGIC
-# MAGIC **Multi-polygon councils are not a problem here.** Bass Coast has 3 polygons,
-# MAGIC French-Elizabeth-Sandstone Islands 3, Murrindindi and Queenscliffe 2 each. Because
-# MAGIC we aggregate at cell level and attribute by name, the fragments merge naturally
-# MAGIC and nothing triple-counts.
+# MAGIC Multi-polygon councils need no special handling — attribution happens at cell
+# MAGIC level and groups by name, so the fragments merge naturally.
 
 # COMMAND ----------
 
@@ -239,36 +243,26 @@ print(f"Working in {CATALOG}.{SCHEMA} at H3 resolution {H3_RES}")
 # MAGIC
 # MAGIC `h3_coverash3` returns an array of cells per geometry. `explode` turns that into
 # MAGIC one row per cell, which is what makes the join an ordinary equality join.
-# MAGIC
-# MAGIC Expect roughly 560k rows for power (before the LV filter — will be lower),
-# MAGIC 505k for fire, 278k for LGA.
 
 # COMMAND ----------
 
 # MAGIC %sql
 # MAGIC CREATE OR REPLACE TABLE workspace.bushfire.cells_segment AS
-# MAGIC SELECT
-# MAGIC   segment_id,
-# MAGIC   explode(h3_coverash3(geom_wkb, 8)) AS h3_cell
+# MAGIC SELECT segment_id, explode(h3_coverash3(geom_wkb, 8)) AS h3_cell
 # MAGIC FROM workspace.bushfire.prep_segment;
 
 # COMMAND ----------
 
 # MAGIC %sql
 # MAGIC CREATE OR REPLACE TABLE workspace.bushfire.cells_fire AS
-# MAGIC SELECT
-# MAGIC   fire_id,
-# MAGIC   explode(h3_coverash3(geom_wkb, 8)) AS h3_cell
+# MAGIC SELECT fire_poly_id, explode(h3_coverash3(geom_wkb, 8)) AS h3_cell
 # MAGIC FROM workspace.bushfire.prep_fire;
 
 # COMMAND ----------
 
 # MAGIC %sql
 # MAGIC CREATE OR REPLACE TABLE workspace.bushfire.cells_lga AS
-# MAGIC SELECT
-# MAGIC   lga_name,
-# MAGIC   lga_type,
-# MAGIC   explode(h3_coverash3(geom_wkb, 8)) AS h3_cell
+# MAGIC SELECT lga_name, lga_type, explode(h3_coverash3(geom_wkb, 8)) AS h3_cell
 # MAGIC FROM workspace.bushfire.prep_lga;
 
 # COMMAND ----------
@@ -283,18 +277,16 @@ print(f"Working in {CATALOG}.{SCHEMA} at H3 resolution {H3_RES}")
 # MAGIC %md
 # MAGIC ## Step 3 — The exposure join
 # MAGIC
-# MAGIC Segments matched to fires through shared cells. `DISTINCT` because a long segment
-# MAGIC and a large fire scar may share many cells, and we want one row per pair.
+# MAGIC Segments matched to fire polygons through shared cells. `DISTINCT` because a long
+# MAGIC segment and a large scar may share many cells and we want one row per pair.
 # MAGIC
-# MAGIC This is the expensive step. Everything else is cheap.
+# MAGIC This is the expensive step. Everything after it is cheap.
 
 # COMMAND ----------
 
 # MAGIC %sql
 # MAGIC CREATE OR REPLACE TABLE workspace.bushfire.segment_fire_pairs AS
-# MAGIC SELECT DISTINCT
-# MAGIC   s.segment_id,
-# MAGIC   f.fire_id
+# MAGIC SELECT DISTINCT s.segment_id, f.fire_poly_id
 # MAGIC FROM workspace.bushfire.cells_segment s
 # MAGIC JOIN workspace.bushfire.cells_fire f
 # MAGIC   ON s.h3_cell = f.h3_cell;
@@ -303,9 +295,9 @@ print(f"Working in {CATALOG}.{SCHEMA} at H3 resolution {H3_RES}")
 
 # MAGIC %sql
 # MAGIC SELECT
-# MAGIC   COUNT(*)                    AS pair_rows,
-# MAGIC   COUNT(DISTINCT segment_id)  AS segments_with_fire,
-# MAGIC   COUNT(DISTINCT fire_id)     AS fires_touching_network
+# MAGIC   COUNT(*)                     AS pair_rows,
+# MAGIC   COUNT(DISTINCT segment_id)   AS segments_with_fire,
+# MAGIC   COUNT(DISTINCT fire_poly_id) AS fire_polygons_touching_network
 # MAGIC FROM workspace.bushfire.segment_fire_pairs;
 
 # COMMAND ----------
@@ -313,63 +305,57 @@ print(f"Working in {CATALOG}.{SCHEMA} at H3 resolution {H3_RES}")
 # MAGIC %md
 # MAGIC ## Step 4 — LGA attribution
 # MAGIC
-# MAGIC A segment can cross more than one council. We attribute it to whichever LGA it
-# MAGIC shares the most cells with, which is a reasonable proxy for "mostly in".
+# MAGIC A segment can cross more than one council. It is attributed to whichever it shares
+# MAGIC the most cells with — a reasonable proxy for "mostly in".
 # MAGIC
-# MAGIC The `ROW_NUMBER` picks the winner. `lga_name` is the tiebreaker so the result is
-# MAGIC deterministic across runs — important, because a metric that changes when you
-# MAGIC re-run the pipeline is impossible to trust.
+# MAGIC `lga_name` is the tiebreaker so results are deterministic across runs. A metric
+# MAGIC that shifts when you re-run the pipeline is impossible to trust.
 
 # COMMAND ----------
 
 # MAGIC %sql
 # MAGIC CREATE OR REPLACE TABLE workspace.bushfire.segment_lga AS
 # MAGIC WITH overlap AS (
-# MAGIC   SELECT
-# MAGIC     s.segment_id,
-# MAGIC     l.lga_name,
-# MAGIC     l.lga_type,
-# MAGIC     COUNT(*) AS shared_cells
+# MAGIC   SELECT s.segment_id, l.lga_name, l.lga_type, COUNT(*) AS shared_cells
 # MAGIC   FROM workspace.bushfire.cells_segment s
-# MAGIC   JOIN workspace.bushfire.cells_lga l
-# MAGIC     ON s.h3_cell = l.h3_cell
+# MAGIC   JOIN workspace.bushfire.cells_lga l ON s.h3_cell = l.h3_cell
 # MAGIC   GROUP BY s.segment_id, l.lga_name, l.lga_type
 # MAGIC ),
 # MAGIC ranked AS (
-# MAGIC   SELECT *,
-# MAGIC     ROW_NUMBER() OVER (
-# MAGIC       PARTITION BY segment_id
-# MAGIC       ORDER BY shared_cells DESC, lga_name ASC
-# MAGIC     ) AS rn
+# MAGIC   SELECT *, ROW_NUMBER() OVER (
+# MAGIC     PARTITION BY segment_id ORDER BY shared_cells DESC, lga_name ASC
+# MAGIC   ) AS rn
 # MAGIC   FROM overlap
 # MAGIC )
 # MAGIC SELECT segment_id, lga_name, lga_type, shared_cells
-# MAGIC FROM ranked
-# MAGIC WHERE rn = 1;
+# MAGIC FROM ranked WHERE rn = 1;
 
 # COMMAND ----------
 
 # MAGIC %md
 # MAGIC ## Step 5 — Aggregate to segment level
 # MAGIC
-# MAGIC Where the six count columns get built.
+# MAGIC Where the count columns get built. Three decisions matter here.
 # MAGIC
-# MAGIC ### Why bushfire and planned burn are counted separately
+# MAGIC ### Distinct fires, not polygons
 # MAGIC
-# MAGIC This is the most consequential decision in the notebook. Planned burns
-# MAGIC substantially outnumber bushfires in the source data. A single `times_burnt`
-# MAGIC metric would mostly be measuring DEECA's fuel reduction program, not fire risk —
-# MAGIC and it would look plausible while being wrong.
+# MAGIC `COUNT(DISTINCT fire_key)` throughout. Counting rows would inflate every figure by
+# MAGIC roughly 14x for segments inside large, heavily fragmented fires.
 # MAGIC
-# MAGIC ### Why three time windows
+# MAGIC ### Bushfire and planned burn counted separately
+# MAGIC
+# MAGIC Planned burns substantially outnumber bushfires. A single `times_burnt` metric
+# MAGIC would mostly measure DEECA's fuel reduction program, not fire risk — and it would
+# MAGIC look entirely plausible while being wrong.
+# MAGIC
+# MAGIC ### Three time windows
 # MAGIC
 # MAGIC A fire in 1903 says little about current risk. Three bushfires since 2006 says a
-# MAGIC lot. The windows let Genie answer "burnt repeatedly" and "burnt repeatedly
-# MAGIC recently" as genuinely different questions.
+# MAGIC lot. The windows let Genie treat "burnt repeatedly" and "burnt repeatedly
+# MAGIC recently" as different questions.
 # MAGIC
-# MAGIC **Assumption to verify:** `SEASON` is treated as a calendar year. Victorian fire
-# MAGIC seasons run July to June, so season 2020 may mean 2019/20. Check `START_DATE`
-# MAGIC against `SEASON` on a few rows and adjust the window boundaries if needed.
+# MAGIC **Assumption to verify** in check 6: `SEASON` is treated as a calendar year.
+# MAGIC Victorian fire seasons run July to June, so season 2020 may mean 2019/20.
 
 # COMMAND ----------
 
@@ -378,25 +364,30 @@ print(f"Working in {CATALOG}.{SCHEMA} at H3 resolution {H3_RES}")
 # MAGIC SELECT
 # MAGIC   p.segment_id,
 # MAGIC
-# MAGIC   COUNT(*)                                                       AS times_burnt_total,
-# MAGIC   COUNT_IF(f.fire_type = 'Bushfire')                             AS times_bushfire_total,
-# MAGIC   COUNT_IF(f.fire_type = 'Burn')                                 AS times_planned_total,
+# MAGIC   COUNT(DISTINCT f.fire_key) AS times_burnt_total,
+# MAGIC   COUNT(DISTINCT CASE WHEN f.fire_type = 'Bushfire' THEN f.fire_key END) AS times_bushfire_total,
+# MAGIC   COUNT(DISTINCT CASE WHEN f.fire_type = 'Burn'     THEN f.fire_key END) AS times_planned_total,
 # MAGIC
-# MAGIC   COUNT_IF(f.season >= 1980)                                     AS times_burnt_since_1980,
-# MAGIC   COUNT_IF(f.season >= 1980 AND f.fire_type = 'Bushfire')        AS times_bushfire_since_1980,
+# MAGIC   COUNT(DISTINCT CASE WHEN f.season >= 1980 THEN f.fire_key END) AS times_burnt_since_1980,
+# MAGIC   COUNT(DISTINCT CASE WHEN f.season >= 1980 AND f.fire_type = 'Bushfire'
+# MAGIC                       THEN f.fire_key END) AS times_bushfire_since_1980,
 # MAGIC
-# MAGIC   COUNT_IF(f.season >= 2006)                                     AS times_burnt_last_20yr,
-# MAGIC   COUNT_IF(f.season >= 2006 AND f.fire_type = 'Bushfire')        AS times_bushfire_last_20yr,
+# MAGIC   COUNT(DISTINCT CASE WHEN f.season >= 2006 THEN f.fire_key END) AS times_burnt_last_20yr,
+# MAGIC   COUNT(DISTINCT CASE WHEN f.season >= 2006 AND f.fire_type = 'Bushfire'
+# MAGIC                       THEN f.fire_key END) AS times_bushfire_last_20yr,
 # MAGIC
-# MAGIC   MAX(f.season)                                                  AS last_burn_season,
-# MAGIC   MAX(CASE WHEN f.fire_type = 'Bushfire' THEN f.season END)      AS last_bushfire_season,
+# MAGIC   MAX(f.season) AS last_burn_season,
+# MAGIC   MAX(CASE WHEN f.fire_type = 'Bushfire' THEN f.season END) AS last_bushfire_season,
 # MAGIC
-# MAGIC   COUNT_IF(f.powerline_caused)                                   AS powerline_caused_fires,
-# MAGIC   MAX(CASE WHEN f.powerline_caused THEN f.season END)            AS last_powerline_caused_season
+# MAGIC   MAX(f.area_ha)                 AS largest_fire_area_ha,
+# MAGIC   MAX_BY(f.fire_name, f.area_ha) AS largest_fire_name,
+# MAGIC   MAX_BY(f.fire_name, f.season)  AS most_recent_fire_name,
+# MAGIC
+# MAGIC   COUNT(DISTINCT CASE WHEN f.powerline_caused THEN f.fire_key END) AS powerline_caused_fires,
+# MAGIC   MAX(CASE WHEN f.powerline_caused THEN f.season END) AS last_powerline_caused_season
 # MAGIC
 # MAGIC FROM workspace.bushfire.segment_fire_pairs p
-# MAGIC JOIN workspace.bushfire.prep_fire f
-# MAGIC   ON p.fire_id = f.fire_id
+# MAGIC JOIN workspace.bushfire.prep_fire f ON p.fire_poly_id = f.fire_poly_id
 # MAGIC GROUP BY p.segment_id;
 
 # COMMAND ----------
@@ -404,12 +395,12 @@ print(f"Working in {CATALOG}.{SCHEMA} at H3 resolution {H3_RES}")
 # MAGIC %md
 # MAGIC ## Step 6 — The gold table
 # MAGIC
-# MAGIC One row per segment. No geometry column. This is what Genie reads.
+# MAGIC One row per segment. No geometry. This is what Genie reads.
 # MAGIC
 # MAGIC `LEFT JOIN` on the stats, because a segment with no fire history is a valid and
-# MAGIC meaningful result — it means that stretch of network has never burnt. `COALESCE`
-# MAGIC turns those into zeros rather than nulls, so `AVG(times_burnt_total)` is correct
-# MAGIC rather than silently excluding the safe segments.
+# MAGIC meaningful result — that stretch of network has never burnt. `COALESCE` turns
+# MAGIC those into zeros rather than nulls, so `AVG(times_burnt_total)` is correct instead
+# MAGIC of silently excluding every safe segment.
 
 # COMMAND ----------
 
@@ -422,21 +413,25 @@ print(f"Working in {CATALOG}.{SCHEMA} at H3 resolution {H3_RES}")
 # MAGIC   s.is_swer,
 # MAGIC   s.distributor_code,
 # MAGIC
-# MAGIC   COALESCE(l.lga_name, 'Outside Victoria or unmatched') AS lga_name,
-# MAGIC   COALESCE(l.lga_type, 'Unknown')                       AS lga_type,
+# MAGIC   COALESCE(l.lga_name, 'Unmatched') AS lga_name,
+# MAGIC   COALESCE(l.lga_type, 'Unknown')   AS lga_type,
 # MAGIC
-# MAGIC   COALESCE(fs.times_burnt_total,          0) AS times_burnt_total,
-# MAGIC   COALESCE(fs.times_bushfire_total,       0) AS times_bushfire_total,
-# MAGIC   COALESCE(fs.times_planned_total,        0) AS times_planned_total,
-# MAGIC   COALESCE(fs.times_burnt_since_1980,     0) AS times_burnt_since_1980,
-# MAGIC   COALESCE(fs.times_bushfire_since_1980,  0) AS times_bushfire_since_1980,
-# MAGIC   COALESCE(fs.times_burnt_last_20yr,      0) AS times_burnt_last_20yr,
-# MAGIC   COALESCE(fs.times_bushfire_last_20yr,   0) AS times_bushfire_last_20yr,
+# MAGIC   COALESCE(fs.times_burnt_total,         0) AS times_burnt_total,
+# MAGIC   COALESCE(fs.times_bushfire_total,      0) AS times_bushfire_total,
+# MAGIC   COALESCE(fs.times_planned_total,       0) AS times_planned_total,
+# MAGIC   COALESCE(fs.times_burnt_since_1980,    0) AS times_burnt_since_1980,
+# MAGIC   COALESCE(fs.times_bushfire_since_1980, 0) AS times_bushfire_since_1980,
+# MAGIC   COALESCE(fs.times_burnt_last_20yr,     0) AS times_burnt_last_20yr,
+# MAGIC   COALESCE(fs.times_bushfire_last_20yr,  0) AS times_bushfire_last_20yr,
 # MAGIC
 # MAGIC   fs.last_burn_season,
 # MAGIC   fs.last_bushfire_season,
 # MAGIC   CASE WHEN fs.last_bushfire_season IS NOT NULL
 # MAGIC        THEN 2026 - fs.last_bushfire_season END AS years_since_last_bushfire,
+# MAGIC
+# MAGIC   fs.largest_fire_area_ha,
+# MAGIC   fs.largest_fire_name,
+# MAGIC   fs.most_recent_fire_name,
 # MAGIC
 # MAGIC   COALESCE(fs.powerline_caused_fires, 0) AS powerline_caused_fires,
 # MAGIC   fs.last_powerline_caused_season,
@@ -448,8 +443,8 @@ print(f"Working in {CATALOG}.{SCHEMA} at H3 resolution {H3_RES}")
 # MAGIC   END AS bushfire_exposure_band
 # MAGIC
 # MAGIC FROM workspace.bushfire.prep_segment s
-# MAGIC LEFT JOIN workspace.bushfire.segment_lga l          ON s.segment_id = l.segment_id
-# MAGIC LEFT JOIN workspace.bushfire.segment_fire_stats fs  ON s.segment_id = fs.segment_id;
+# MAGIC LEFT JOIN workspace.bushfire.segment_lga l         ON s.segment_id = l.segment_id
+# MAGIC LEFT JOIN workspace.bushfire.segment_fire_stats fs ON s.segment_id = fs.segment_id;
 
 # COMMAND ----------
 
@@ -461,8 +456,8 @@ print(f"Working in {CATALOG}.{SCHEMA} at H3 resolution {H3_RES}")
 # COMMAND ----------
 
 # MAGIC %md
-# MAGIC **Check 1 — no segments lost.** Gold must match prep exactly. A LEFT JOIN that
-# MAGIC accidentally fans out would show up here as more rows than expected.
+# MAGIC **Check 1 — no segments lost or duplicated.** Gold must match prep exactly. A
+# MAGIC LEFT JOIN that accidentally fans out shows up here.
 
 # COMMAND ----------
 
@@ -489,8 +484,8 @@ print(f"Working in {CATALOG}.{SCHEMA} at H3 resolution {H3_RES}")
 # COMMAND ----------
 
 # MAGIC %md
-# MAGIC **Check 3 — counts are internally consistent.** Bushfire plus planned should equal
-# MAGIC total, and the narrower windows can never exceed the wider ones. Must return zero.
+# MAGIC **Check 3 — counts internally consistent.** Bushfire plus planned cannot exceed
+# MAGIC total, and narrower windows cannot exceed wider ones. Must return zero.
 
 # COMMAND ----------
 
@@ -498,21 +493,21 @@ print(f"Working in {CATALOG}.{SCHEMA} at H3 resolution {H3_RES}")
 # MAGIC SELECT COUNT(*) AS inconsistent_rows
 # MAGIC FROM workspace.bushfire.gold_segment_exposure
 # MAGIC WHERE times_bushfire_total + times_planned_total > times_burnt_total
-# MAGIC    OR times_burnt_since_1980 > times_burnt_total
-# MAGIC    OR times_burnt_last_20yr  > times_burnt_since_1980
+# MAGIC    OR times_burnt_since_1980   > times_burnt_total
+# MAGIC    OR times_burnt_last_20yr    > times_burnt_since_1980
 # MAGIC    OR times_bushfire_last_20yr > times_bushfire_since_1980;
 
 # COMMAND ----------
 
 # MAGIC %md
 # MAGIC **Check 4 — LGA attribution coverage.** Some unmatched segments are expected near
-# MAGIC borders and coastlines. A large proportion would mean the LGA cell layer has gaps.
+# MAGIC borders and coastlines. A large share would mean gaps in the LGA cell layer.
 
 # COMMAND ----------
 
 # MAGIC %sql
 # MAGIC SELECT
-# MAGIC   lga_name = 'Outside Victoria or unmatched' AS unmatched,
+# MAGIC   lga_name = 'Unmatched' AS unmatched,
 # MAGIC   COUNT(*) AS segments,
 # MAGIC   ROUND(100.0 * COUNT(*) / SUM(COUNT(*)) OVER (), 2) AS pct
 # MAGIC FROM workspace.bushfire.gold_segment_exposure
@@ -522,15 +517,13 @@ print(f"Working in {CATALOG}.{SCHEMA} at H3 resolution {H3_RES}")
 
 # MAGIC %md
 # MAGIC **Check 5 — does the distribution look sane?** No single right answer, but if
-# MAGIC every segment lands in one band something is wrong.
+# MAGIC everything lands in one band something is wrong.
 
 # COMMAND ----------
 
 # MAGIC %sql
-# MAGIC SELECT
-# MAGIC   bushfire_exposure_band,
-# MAGIC   COUNT(*) AS segments,
-# MAGIC   ROUND(100.0 * COUNT(*) / SUM(COUNT(*)) OVER (), 1) AS pct
+# MAGIC SELECT bushfire_exposure_band, COUNT(*) AS segments,
+# MAGIC        ROUND(100.0 * COUNT(*) / SUM(COUNT(*)) OVER (), 1) AS pct
 # MAGIC FROM workspace.bushfire.gold_segment_exposure
 # MAGIC GROUP BY bushfire_exposure_band
 # MAGIC ORDER BY segments DESC;
@@ -538,17 +531,14 @@ print(f"Working in {CATALOG}.{SCHEMA} at H3 resolution {H3_RES}")
 # COMMAND ----------
 
 # MAGIC %md
-# MAGIC **Check 6 — the SEASON assumption.** Compare the year in `START_DATE` against
-# MAGIC `SEASON`. If they differ consistently by one, the season is labelled by its ending
-# MAGIC year and the 1980 and 2006 window boundaries need shifting.
+# MAGIC **Check 6 — the SEASON assumption.** Compare `START_DATE` year against `SEASON`.
+# MAGIC If they differ consistently by one, seasons are labelled by their ending year and
+# MAGIC the 1980 and 2006 boundaries need shifting.
 
 # COMMAND ----------
 
 # MAGIC %sql
-# MAGIC SELECT
-# MAGIC   season,
-# MAGIC   YEAR(start_date) AS start_year,
-# MAGIC   COUNT(*) AS n
+# MAGIC SELECT season, YEAR(start_date) AS start_year, COUNT(*) AS n
 # MAGIC FROM workspace.bushfire.prep_fire
 # MAGIC WHERE start_date IS NOT NULL AND season >= 2018
 # MAGIC GROUP BY season, YEAR(start_date)
@@ -560,17 +550,16 @@ print(f"Working in {CATALOG}.{SCHEMA} at H3 resolution {H3_RES}")
 # MAGIC %md
 # MAGIC ## Sample answers
 # MAGIC
-# MAGIC The kind of question the app has to handle. If these return sensible results, the
+# MAGIC The kind of question the app has to handle. If these return sensible results the
 # MAGIC data is ready for Genie.
 
 # COMMAND ----------
 
 # MAGIC %sql
-# MAGIC SELECT
-# MAGIC   lga_name,
-# MAGIC   COUNT(*)                          AS segments,
-# MAGIC   ROUND(AVG(times_bushfire_since_1980), 2) AS avg_bushfires,
-# MAGIC   COUNT_IF(bushfire_exposure_band = 'High') AS high_exposure_segments
+# MAGIC SELECT lga_name,
+# MAGIC        COUNT(*) AS segments,
+# MAGIC        ROUND(AVG(times_bushfire_since_1980), 2) AS avg_bushfires,
+# MAGIC        COUNT_IF(bushfire_exposure_band = 'High') AS high_exposure_segments
 # MAGIC FROM workspace.bushfire.gold_segment_exposure
 # MAGIC WHERE voltage_class = 'HV Distribution'
 # MAGIC GROUP BY lga_name
@@ -580,14 +569,23 @@ print(f"Working in {CATALOG}.{SCHEMA} at H3 resolution {H3_RES}")
 # COMMAND ----------
 
 # MAGIC %sql
-# MAGIC SELECT
-# MAGIC   is_swer,
-# MAGIC   COUNT(*)                                 AS segments,
-# MAGIC   ROUND(AVG(times_bushfire_since_1980), 3) AS avg_bushfires,
-# MAGIC   ROUND(100.0 * COUNT_IF(bushfire_exposure_band IN ('Moderate','High'))
-# MAGIC         / COUNT(*), 1)                     AS pct_moderate_or_high
+# MAGIC SELECT is_swer,
+# MAGIC        COUNT(*) AS segments,
+# MAGIC        ROUND(AVG(times_bushfire_since_1980), 3) AS avg_bushfires,
+# MAGIC        ROUND(100.0 * COUNT_IF(bushfire_exposure_band IN ('Moderate','High'))
+# MAGIC              / COUNT(*), 1) AS pct_moderate_or_high
 # MAGIC FROM workspace.bushfire.gold_segment_exposure
 # MAGIC GROUP BY is_swer;
+
+# COMMAND ----------
+
+# MAGIC %sql
+# MAGIC SELECT lga_name, voltage, powerline_caused_fires, last_powerline_caused_season,
+# MAGIC        most_recent_fire_name
+# MAGIC FROM workspace.bushfire.gold_segment_exposure
+# MAGIC WHERE powerline_caused_fires > 0
+# MAGIC ORDER BY powerline_caused_fires DESC, last_powerline_caused_season DESC
+# MAGIC LIMIT 20;
 
 # COMMAND ----------
 
@@ -599,4 +597,4 @@ print(f"Working in {CATALOG}.{SCHEMA} at H3 resolution {H3_RES}")
 # MAGIC
 # MAGIC Next: notebook 04, the semantic layer. Column comments, metric definitions and
 # MAGIC Genie instructions. That is where 20 of the 40 contest points live, and it matters
-# MAGIC considerably more than anything in this notebook.
+# MAGIC more than anything in this notebook.
