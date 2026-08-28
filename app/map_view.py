@@ -106,8 +106,7 @@ def render_state_map(run_sql: Callable[[str], list[list[Any]]],
                   "fontSize": "12px", "borderRadius": "6px"},
     }
 
-    st.pydeck_chart(_deck(df, tooltip, VIC_ZOOM, VIC_LAT, VIC_LON, elevation=True),
-                    use_container_width=True)
+    st.pydeck_chart(_deck(df, tooltip, VIC_ZOOM, VIC_LAT, VIC_LON, elevation=True))
 
     st.caption(
         "Each hexagon is roughly 8.5 km across. Colour and height show how much "
@@ -183,7 +182,7 @@ def render_result_map(df: pd.DataFrame, run_sql: Callable[[str], list[list[Any]]
                   "fontSize": "12px", "borderRadius": "6px"},
     }
 
-    st.pydeck_chart(_deck(hexes, tooltip, zoom, lat, lon), use_container_width=True)
+    st.pydeck_chart(_deck(hexes, tooltip, zoom, lat, lon))
 
     note = f"{len(ids):,} segments from this answer, mapped at ~1.2 km resolution."
     if truncated:

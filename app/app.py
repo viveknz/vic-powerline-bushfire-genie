@@ -180,7 +180,7 @@ def render_sidebar() -> None:
     with st.sidebar:
         banner = os.path.join(os.path.dirname(os.path.abspath(__file__)), "thumbnail.png")
         if os.path.exists(banner):
-            st.image(banner, use_container_width=True)
+            st.image(banner, use_column_width=True)
         st.subheader("How this works")
         st.markdown(
             "Every question goes to a **Genie Agent** which writes SQL against "
