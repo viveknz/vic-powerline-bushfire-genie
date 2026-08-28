@@ -24,12 +24,32 @@ import streamlit as st
 
 log = logging.getLogger("bushfire.map")
 
-# Victoria, roughly centred with the whole state in frame
-VIC_LAT, VIC_LON, VIC_ZOOM = -36.9, 144.6, 5.4
+# Victoria spans roughly 34S to 39.2S and 141E to 150E. These values put the
+# whole state in frame with a little margin.
+VIC_LAT, VIC_LON, VIC_ZOOM = -37.0, 145.1, 6.15
 
-# Cool slate through to ember. Deliberately not a rainbow: this is one variable
-# increasing, and a sequential ramp reads that way without a legend.
-RAMP = [
+# Fixed height. Without it the deck fills whatever the container gives it, and
+# a tall container at low zoom pulls Tasmania and South Australia into frame.
+MAP_HEIGHT = 520
+
+# The view is locked to Victoria. Zooming out past the state or rotating the
+# map serves no purpose here and makes it easy to get lost during a demo.
+# Panning and zooming in still work, so you can inspect East Gippsland.
+MIN_ZOOM, MAX_ZOOM = 6.0, 11.0
+
+# Two ramps, because a colour that reads on a dark basemap disappears on a
+# light one. Both are sequential: this is a single variable increasing, and a
+# rainbow would imply categories that do not exist.
+RAMP_LIGHT = [
+    (0.0, (255, 245, 200)),
+    (10.0, (254, 217, 142)),
+    (25.0, (254, 173, 84)),
+    (50.0, (242, 119, 42)),
+    (75.0, (217, 72, 26)),
+    (100.0, (153, 26, 12)),
+]
+
+RAMP_DARK = [
     (0.0, (44, 52, 64)),
     (10.0, (78, 66, 58)),
     (25.0, (140, 78, 44)),
@@ -38,25 +58,33 @@ RAMP = [
     (100.0, (252, 176, 72)),
 ]
 
+# Carto basemaps, no API key required. Satellite would need a Mapbox token.
+MAP_STYLES = {
+    "Dark": ("dark", RAMP_DARK),
+    "Road": ("road", RAMP_LIGHT),
+    "Light": ("light", RAMP_LIGHT),
+}
 
-def _colour(pct: Optional[float], alpha: int = 190) -> list[int]:
-    """Interpolate the ramp. None and zero both read as the base slate."""
+
+def _colour(pct: Optional[float], ramp=None, alpha: int = 200) -> list[int]:
+    """Interpolate a ramp. Missing values fade rather than reading as zero."""
+    ramp = ramp or RAMP_DARK
     if pct is None or pd.isna(pct):
-        return [*RAMP[0][1], 110]
+        return [*ramp[0][1], 90]
 
     pct = max(0.0, min(100.0, float(pct)))
-    for i in range(len(RAMP) - 1):
-        lo_v, lo_c = RAMP[i]
-        hi_v, hi_c = RAMP[i + 1]
+    for i in range(len(ramp) - 1):
+        lo_v, lo_c = ramp[i]
+        hi_v, hi_c = ramp[i + 1]
         if lo_v <= pct <= hi_v:
             span = hi_v - lo_v
             t = 0.0 if span == 0 else (pct - lo_v) / span
             return [int(lo_c[j] + (hi_c[j] - lo_c[j]) * t) for j in range(3)] + [alpha]
-    return [*RAMP[-1][1], alpha]
+    return [*ramp[-1][1], alpha]
 
 
 def _deck(df: pd.DataFrame, tooltip: dict, zoom: float, lat: float, lon: float,
-          elevation: bool = False) -> pdk.Deck:
+          elevation: bool = False, style: str = "road") -> pdk.Deck:
     layer = pdk.Layer(
         "H3HexagonLayer",
         df,
@@ -68,14 +96,31 @@ def _deck(df: pd.DataFrame, tooltip: dict, zoom: float, lat: float, lon: float,
         get_elevation="elevation" if elevation else 0,
         get_hexagon="hex_id",
         get_fill_color="fill_color",
-        opacity=0.85,
+        get_line_color=[255, 255, 255, 40],
+        line_width_min_pixels=0,
+        opacity=0.8,
+    )
+    view_state = pdk.ViewState(
+        latitude=lat,
+        longitude=lon,
+        zoom=zoom,
+        min_zoom=MIN_ZOOM,
+        max_zoom=MAX_ZOOM,
+        pitch=35 if elevation else 0,
+        bearing=0,
     )
     return pdk.Deck(
         layers=[layer],
-        initial_view_state=pdk.ViewState(
-            latitude=lat, longitude=lon, zoom=zoom, pitch=35 if elevation else 0
-        ),
-        map_style="dark_no_labels",
+        height=MAP_HEIGHT,
+        initial_view_state=view_state,
+        views=[
+            pdk.View(
+                type="MapView",
+                controller={"dragRotate": False, "touchRotate": False,
+                            "doubleClickZoom": False, "keyboard": False},
+            )
+        ],
+        map_style=style,
         tooltip=tooltip,
     )
 
@@ -92,8 +137,18 @@ def render_state_map(run_sql: Callable[[str], list[list[Any]]],
     if df.empty:
         return False
 
-    df["fill_color"] = df["avg_pct_extent_burnt"].apply(_colour)
-    df["elevation"] = df["high_exposure_segments"].fillna(0) * 60
+    left, right = st.columns([3, 2])
+    with left:
+        st.markdown("**Where the network meets fire country**")
+    with right:
+        choice = st.radio(
+            "Basemap", list(MAP_STYLES), horizontal=True,
+            label_visibility="collapsed", key="map_style",
+        )
+    style, ramp = MAP_STYLES[choice]
+
+    df["fill_color"] = df["avg_pct_extent_burnt"].apply(lambda v: _colour(v, ramp))
+    df["elevation"] = df["high_exposure_segments"].fillna(0) * 90
 
     tooltip = {
         "html": (
@@ -106,7 +161,9 @@ def render_state_map(run_sql: Callable[[str], list[list[Any]]],
                   "fontSize": "12px", "borderRadius": "6px"},
     }
 
-    st.pydeck_chart(_deck(df, tooltip, VIC_ZOOM, VIC_LAT, VIC_LON, elevation=True))
+    st.pydeck_chart(
+        _deck(df, tooltip, VIC_ZOOM, VIC_LAT, VIC_LON, elevation=True, style=style)
+    )
 
     st.caption(
         "Each hexagon is roughly 8.5 km across. Colour and height show how much "
@@ -173,7 +230,7 @@ def render_result_map(df: pd.DataFrame, run_sql: Callable[[str], list[list[Any]]
 
     # A result map is about location, not intensity, so one warm colour reads
     # more clearly than a ramp over an arbitrary subset.
-    hexes["fill_color"] = [[232, 122, 44, 210]] * len(hexes)
+    hexes["fill_color"] = [[217, 72, 26, 215]] * len(hexes)
 
     lat, lon, zoom = _frame(hexes)
     tooltip = {
@@ -182,7 +239,8 @@ def render_result_map(df: pd.DataFrame, run_sql: Callable[[str], list[list[Any]]
                   "fontSize": "12px", "borderRadius": "6px"},
     }
 
-    st.pydeck_chart(_deck(hexes, tooltip, zoom, lat, lon))
+    style = MAP_STYLES.get(st.session_state.get("map_style", "Road"), ("road", None))[0]
+    st.pydeck_chart(_deck(hexes, tooltip, zoom, lat, lon, style=style))
 
     note = f"{len(ids):,} segments from this answer, mapped at ~1.2 km resolution."
     if truncated:
@@ -213,8 +271,7 @@ def _load_segment_hexes(_run_sql, catalog: str, schema: str,
 
 
 def _frame(hexes: pd.DataFrame) -> tuple[float, float, float]:
-    """Pick a sensible view. Without cell centroids, fall back to the state view
-    and let the user pan — better than guessing wrong and framing the ocean."""
-    if len(hexes) > 200:
-        return VIC_LAT, VIC_LON, VIC_ZOOM
-    return VIC_LAT, VIC_LON, VIC_ZOOM + 0.4
+    """Result maps stay on the state view. Without cell centroids we cannot
+    frame a subset reliably, and guessing wrong puts the camera in the ocean.
+    Zooming in from a known-good view is the safer default."""
+    return VIC_LAT, VIC_LON, VIC_ZOOM

@@ -69,25 +69,29 @@ st.markdown(
       .stChatMessage { background: transparent; }
       code { font-size: 0.85rem; }
 
-      /* Streamlit ships a chevron for the collapsed sidebar. Swap it for a
-         hamburger, which people recognise without thinking about it. */
+      /* Streamlit ships a chevron for the sidebar toggle. Swap it for a
+         hamburger, which people recognise without thinking about it. The
+         literal glyph is used rather than a CSS escape, which browsers
+         mis-parse when the next character is a digit. */
       div[data-testid="collapsedControl"] button svg,
-      div[data-testid="stSidebarCollapsedControl"] button svg { display: none; }
+      div[data-testid="stSidebarCollapsedControl"] button svg,
+      div[data-testid="stSidebarCollapseButton"] button svg { display: none; }
 
       div[data-testid="collapsedControl"] button::after,
-      div[data-testid="stSidebarCollapsedControl"] button::after {
-        content: "\2630";
-        font-size: 1.35rem;
+      div[data-testid="stSidebarCollapsedControl"] button::after,
+      div[data-testid="stSidebarCollapseButton"] button::after {
+        content: "☰";
+        font-size: 1.3rem;
         line-height: 1;
-        color: #1a1d23;
+        color: #e8edf5;
       }
 
       div[data-testid="collapsedControl"] button,
       div[data-testid="stSidebarCollapsedControl"] button {
-        background: #f4efe8;
-        border: 1px solid #e2d9cc;
+        background: #1a1f2b;
+        border: 1px solid #2c3444;
         border-radius: 8px;
-        padding: 0.35rem 0.6rem;
+        padding: 0.3rem 0.55rem;
       }
 
       /* Give the map room to breathe */
