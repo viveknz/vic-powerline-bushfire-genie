@@ -30,11 +30,11 @@ VIC_LAT, VIC_LON, VIC_ZOOM = -37.0, 145.1, 6.15
 
 # Fixed height. Without it the deck fills whatever the container gives it, and
 # a tall container at low zoom pulls Tasmania and South Australia into frame.
-MAP_HEIGHT = 520
+MAP_HEIGHT = 460
 
-# The view is locked to Victoria. Zooming out past the state or rotating the
-# map serves no purpose here and makes it easy to get lost during a demo.
-# Panning and zooming in still work, so you can inspect East Gippsland.
+# The view is bounded to Victoria: you cannot zoom out past the state, which
+# keeps the demo on track. Tilt and rotate stay enabled because the extrusion
+# only reads in 3D — ctrl-drag or right-drag to tilt.
 MIN_ZOOM, MAX_ZOOM = 6.0, 11.0
 
 # Two ramps, because a colour that reads on a dark basemap disappears on a
@@ -116,8 +116,8 @@ def _deck(df: pd.DataFrame, tooltip: dict, zoom: float, lat: float, lon: float,
         views=[
             pdk.View(
                 type="MapView",
-                controller={"dragRotate": False, "touchRotate": False,
-                            "doubleClickZoom": False, "keyboard": False},
+                controller={"dragRotate": True, "touchRotate": True,
+                            "doubleClickZoom": False, "keyboard": True},
             )
         ],
         map_style=style,
@@ -137,14 +137,11 @@ def render_state_map(run_sql: Callable[[str], list[list[Any]]],
     if df.empty:
         return False
 
-    left, right = st.columns([3, 2])
-    with left:
-        st.markdown("**Where the network meets fire country**")
-    with right:
-        choice = st.radio(
-            "Basemap", list(MAP_STYLES), horizontal=True,
-            label_visibility="collapsed", key="map_style",
-        )
+    st.markdown("#### Where the network meets fire country")
+    choice = st.radio(
+        "Basemap", list(MAP_STYLES), horizontal=True,
+        label_visibility="collapsed", key="map_style",
+    )
     style, ramp = MAP_STYLES[choice]
 
     df["fill_color"] = df["avg_pct_extent_burnt"].apply(lambda v: _colour(v, ramp))
@@ -168,7 +165,7 @@ def render_state_map(run_sql: Callable[[str], list[list[Any]]],
     st.caption(
         "Each hexagon is roughly 8.5 km across. Colour and height show how much "
         "of the overhead network in that cell runs through country burnt by "
-        "major bushfires. Hover for detail."
+        "major bushfires. Hover for detail, ctrl-drag to tilt."
     )
     return True
 

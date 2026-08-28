@@ -43,6 +43,8 @@ WAREHOUSE_ID = os.environ.get("DATABRICKS_WAREHOUSE_ID", "")
 CATALOG = os.environ.get("UC_CATALOG", "workspace")
 SCHEMA = os.environ.get("UC_SCHEMA", "bushfire")
 
+AUTHOR = os.environ.get("APP_AUTHOR", "Vivek")
+
 SUGGESTED_QUESTIONS = [
     "Which councils have the most bushfire-exposed powerline network?",
     "Are SWER lines more exposed to bushfire than other high voltage lines?",
@@ -61,10 +63,19 @@ st.set_page_config(
 st.markdown(
     """
     <style>
-      .block-container { padding-top: 2rem; max-width: 1200px; }
+      .block-container { padding-top: 1.4rem; max-width: 1320px; }
 
-      div[data-testid="stMetricValue"] { font-size: 1.6rem; }
-      div[data-testid="stMetricLabel"] { font-size: 0.8rem; opacity: 0.75; }
+      div[data-testid="stMetricValue"] {
+        font-size: 1.85rem;
+        font-weight: 700;
+        color: #f0913f;
+      }
+      div[data-testid="stMetricLabel"] {
+        font-size: 0.78rem;
+        letter-spacing: 0.04em;
+        text-transform: uppercase;
+        color: #9aa6ba;
+      }
 
       .stChatMessage { background: transparent; }
       code { font-size: 0.85rem; }
@@ -96,6 +107,34 @@ st.markdown(
 
       /* Give the map room to breathe */
       iframe[title="st.iframe"], .stDeckGlJsonChart { border-radius: 10px; }
+
+      /* The chat box is the product. Make it look like it. */
+      div[data-testid="stChatInput"] {
+        border: 2px solid #e07a2c;
+        border-radius: 14px;
+        background: #1b212e;
+        box-shadow: 0 0 22px rgba(224, 122, 44, 0.16);
+      }
+      div[data-testid="stChatInput"]:focus-within {
+        border-color: #ffa657;
+        box-shadow: 0 0 0 3px rgba(224, 122, 44, 0.26);
+      }
+      div[data-testid="stChatInput"] textarea {
+        font-size: 1.02rem;
+      }
+      div[data-testid="stChatInput"] textarea::placeholder {
+        color: #b9c3d4;
+        opacity: 1;
+      }
+      div[data-testid="stBottomBlockContainer"] { padding-bottom: 1.4rem; }
+
+      .credit-line {
+        font-size: 0.76rem;
+        color: #7b869a;
+        letter-spacing: 0.02em;
+        margin-top: -0.4rem;
+      }
+      .credit-line b { color: #9aa6ba; font-weight: 600; }
     </style>
     """,
     unsafe_allow_html=True,
@@ -202,6 +241,13 @@ def render_header() -> None:
         f"{stats['powerline']:,}" if stats["powerline"] is not None else "—",
         help="Cause is investigated for only about 3% of fires, so this is a floor",
     )
+
+    st.markdown(
+        '<p class="credit-line">Powered by <b>Databricks Genie</b> on '
+        '<b>Databricks Free Edition</b> &middot; developer preview &middot; '
+        f'built by {AUTHOR}</p>',
+        unsafe_allow_html=True,
+    )
     st.divider()
 
 
@@ -274,6 +320,10 @@ def render_sidebar() -> None:
         st.caption(
             "Source: Vicmap Infrastructure and Fire History Scar, "
             "State Government of Victoria (DEECA), CC BY 4.0."
+        )
+        st.caption(
+            f"Powered by Databricks Genie · Databricks Free Edition · "
+            f"developer preview · built by {AUTHOR}"
         )
 
 
@@ -455,21 +505,28 @@ def main() -> None:
     pending: Optional[str] = None
 
     if not st.session_state.messages:
-        try:
-            map_view.render_state_map(run_sql, CATALOG, SCHEMA)
-        except Exception:
-            log.exception("State map failed")
-            st.info("Map unavailable. Ask a question below.")
+        map_col, ask_col = st.columns([3, 2], gap="large")
 
-        st.markdown("**Try one of these**")
-        cols = st.columns(2)
-        for i, question in enumerate(SUGGESTED_QUESTIONS):
-            if cols[i % 2].button(question, key=f"sq_{i}", use_container_width=True):
-                pending = question
-        st.caption(
-            "Or ask your own. Follow-up questions keep the thread, so "
-            "\"just the top three\" works after any answer."
-        )
+        with map_col:
+            try:
+                map_view.render_state_map(run_sql, CATALOG, SCHEMA)
+            except Exception:
+                log.exception("State map failed")
+                st.info("Map unavailable. Ask a question on the right.")
+
+        with ask_col:
+            st.markdown("#### Ask the data a question")
+            st.caption(
+                "Genie writes the SQL against three curated views. Nothing here "
+                "is pre-built."
+            )
+            for i, question in enumerate(SUGGESTED_QUESTIONS):
+                if st.button(question, key=f"sq_{i}", use_container_width=True):
+                    pending = question
+            st.caption(
+                "Or type your own below. Follow-ups keep the thread, so "
+                "\"just the top three\" works after any answer."
+            )
     else:
         replay_history()
 
