@@ -223,8 +223,8 @@ def load_header_stats() -> dict[str, Optional[int]]:
 def render_header() -> None:
     st.title("Victorian Powerline Bushfire Exposure")
     st.caption(
-        "Ask questions about where Victoria's overhead electricity network "
-        "meets country that burns. Fire history 1903 to 2026."
+        "Bushfire exposure across the overhead electricity network of Victoria, "
+        "Australia. Fire history 1903 to 2026."
     )
 
     stats = load_header_stats()

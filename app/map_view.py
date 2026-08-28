@@ -33,8 +33,9 @@ VIC_LAT, VIC_LON, VIC_ZOOM = -37.0, 145.1, 6.15
 MAP_HEIGHT = 460
 
 # The view is bounded to Victoria: you cannot zoom out past the state, which
-# keeps the demo on track. Tilt and rotate stay enabled because the extrusion
-# only reads in 3D — ctrl-drag or right-drag to tilt.
+# keeps the demo on track. The map is flat — extruded hexagons were tried and
+# the height channel only duplicated what colour already carries, at the cost
+# of obscuring the coastline.
 MIN_ZOOM, MAX_ZOOM = 6.0, 11.0
 
 # Two ramps, because a colour that reads on a dark basemap disappears on a
@@ -61,7 +62,6 @@ RAMP_DARK = [
 # Carto basemaps, no API key required. Satellite would need a Mapbox token.
 MAP_STYLES = {
     "Dark": ("dark", RAMP_DARK),
-    "Road": ("road", RAMP_LIGHT),
     "Light": ("light", RAMP_LIGHT),
 }
 
@@ -84,20 +84,18 @@ def _colour(pct: Optional[float], ramp=None, alpha: int = 200) -> list[int]:
 
 
 def _deck(df: pd.DataFrame, tooltip: dict, zoom: float, lat: float, lon: float,
-          elevation: bool = False, style: str = "road") -> pdk.Deck:
+          style: str = "dark") -> pdk.Deck:
     layer = pdk.Layer(
         "H3HexagonLayer",
         df,
         pickable=True,
-        stroked=False,
+        stroked=True,
         filled=True,
-        extruded=elevation,
-        elevation_scale=40 if elevation else 0,
-        get_elevation="elevation" if elevation else 0,
+        extruded=False,
         get_hexagon="hex_id",
         get_fill_color="fill_color",
         get_line_color=[255, 255, 255, 40],
-        line_width_min_pixels=0,
+        line_width_min_pixels=0.5,
         opacity=0.8,
     )
     view_state = pdk.ViewState(
@@ -106,7 +104,7 @@ def _deck(df: pd.DataFrame, tooltip: dict, zoom: float, lat: float, lon: float,
         zoom=zoom,
         min_zoom=MIN_ZOOM,
         max_zoom=MAX_ZOOM,
-        pitch=35 if elevation else 0,
+        pitch=0,
         bearing=0,
     )
     return pdk.Deck(
@@ -116,7 +114,7 @@ def _deck(df: pd.DataFrame, tooltip: dict, zoom: float, lat: float, lon: float,
         views=[
             pdk.View(
                 type="MapView",
-                controller={"dragRotate": True, "touchRotate": True,
+                controller={"dragRotate": False, "touchRotate": False,
                             "doubleClickZoom": False, "keyboard": True},
             )
         ],
@@ -137,7 +135,9 @@ def render_state_map(run_sql: Callable[[str], list[list[Any]]],
     if df.empty:
         return False
 
-    st.markdown("#### Where the network meets fire country")
+    st.markdown(
+        "#### Victoria, Australia — bushfire exposure across the powerline network"
+    )
     choice = st.radio(
         "Basemap", list(MAP_STYLES), horizontal=True,
         label_visibility="collapsed", key="map_style",
@@ -145,7 +145,6 @@ def render_state_map(run_sql: Callable[[str], list[list[Any]]],
     style, ramp = MAP_STYLES[choice]
 
     df["fill_color"] = df["avg_pct_extent_burnt"].apply(lambda v: _colour(v, ramp))
-    df["elevation"] = df["high_exposure_segments"].fillna(0) * 90
 
     tooltip = {
         "html": (
@@ -158,14 +157,12 @@ def render_state_map(run_sql: Callable[[str], list[list[Any]]],
                   "fontSize": "12px", "borderRadius": "6px"},
     }
 
-    st.pydeck_chart(
-        _deck(df, tooltip, VIC_ZOOM, VIC_LAT, VIC_LON, elevation=True, style=style)
-    )
+    st.pydeck_chart(_deck(df, tooltip, VIC_ZOOM, VIC_LAT, VIC_LON, style=style))
 
     st.caption(
-        "Each hexagon is roughly 8.5 km across. Colour and height show how much "
-        "of the overhead network in that cell runs through country burnt by "
-        "major bushfires. Hover for detail, ctrl-drag to tilt."
+        "The state of Victoria, in south-eastern Australia. Each hexagon is "
+        "roughly 8.5 km across, shaded by how much of the overhead network in "
+        "that cell runs through country burnt by major bushfires. Hover for detail."
     )
     return True
 
