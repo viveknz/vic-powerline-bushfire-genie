@@ -1,3 +1,4 @@
 streamlit
 databricks-sdk
 pandas
+pydeck

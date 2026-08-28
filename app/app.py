@@ -19,6 +19,7 @@ import pandas as pd
 import streamlit as st
 from databricks.sdk import WorkspaceClient
 
+import map_view
 from genie_client import GenieClient, GenieError, GenieTurn, rows_to_records
 
 # --------------------------------------------------------------------------
@@ -54,7 +55,7 @@ st.set_page_config(
     page_title="Victorian Powerline Bushfire Exposure",
     page_icon="🔥",
     layout="wide",
-    initial_sidebar_state="expanded",
+    initial_sidebar_state="collapsed",
 )
 
 st.markdown(
@@ -177,6 +178,9 @@ def render_header() -> None:
 def render_sidebar() -> None:
     """The semantic layer is 90% of the work and 0% visible. This fixes that."""
     with st.sidebar:
+        banner = os.path.join(os.path.dirname(os.path.abspath(__file__)), "thumbnail.png")
+        if os.path.exists(banner):
+            st.image(banner, use_container_width=True)
         st.subheader("How this works")
         st.markdown(
             "Every question goes to a **Genie Agent** which writes SQL against "
@@ -311,6 +315,12 @@ def render_result(turn: GenieTurn, key: str) -> None:
     footer += f" · {turn.elapsed_seconds}s"
     st.caption(footer)
 
+    try:
+        if map_view.render_result_map(df, run_sql, CATALOG, SCHEMA):
+            log.info("Rendered result map for %s", key)
+    except Exception:
+        log.exception("Result map failed")
+
     st.download_button(
         "Download CSV",
         df.to_csv(index=False).encode("utf-8"),
@@ -325,8 +335,9 @@ def ask_genie(question: str) -> None:
     client = get_genie_client()
     if client is None:
         st.error(
-            "Genie is not configured. Set GENIE_SPACE_ID and attach the Genie "
-            "Agent as an app resource."
+            f"Genie is not configured. GENIE_SPACE_ID is "
+            f"{'empty' if not GENIE_SPACE_ID else repr(GENIE_SPACE_ID)}. "
+            "Check app.yaml and that the service principal has Can Run on the agent."
         )
         return
 
@@ -350,7 +361,16 @@ def ask_genie(question: str) -> None:
         except GenieError as exc:
             log.exception("Genie call failed")
             status_box.update(label="Failed", state="error")
-            st.error(f"Something went wrong: {exc}")
+            st.error(f"Genie call failed: {exc}")
+            st.session_state.messages.append(
+                {"role": "assistant", "content": f"Error: {exc}", "turn": None}
+            )
+            return
+        except Exception as exc:  # noqa: BLE001 - never fail silently
+            log.exception("Unexpected error while asking Genie")
+            status_box.update(label="Failed", state="error")
+            st.error(f"Unexpected error: {type(exc).__name__}: {exc}")
+            st.exception(exc)
             st.session_state.messages.append(
                 {"role": "assistant", "content": f"Error: {exc}", "turn": None}
             )
@@ -405,6 +425,12 @@ def main() -> None:
     pending: Optional[str] = None
 
     if not st.session_state.messages:
+        try:
+            map_view.render_state_map(run_sql, CATALOG, SCHEMA)
+        except Exception:
+            log.exception("State map failed")
+            st.info("Map unavailable. Ask a question below.")
+
         st.markdown("**Try one of these**")
         cols = st.columns(2)
         for i, question in enumerate(SUGGESTED_QUESTIONS):
@@ -423,7 +449,6 @@ def main() -> None:
 
     if pending:
         ask_genie(pending)
-        st.rerun()
 
 
 if __name__ == "__main__":
