@@ -1,25 +1,15 @@
 command: ["streamlit", "run", "app.py"]
 
 env:
-  # The Genie Agent this app talks to.
-  #
-  # Preferred: add the agent as an app resource in the Databricks Apps UI with
-  # the key "genie-agent", then this picks up its id automatically.
-  #
-  # Fallback if resource binding gives trouble: replace the whole entry with
-  #   - name: GENIE_SPACE_ID
-  #     value: "01f1a2dfca9c105eab89635b24ad21ae"
   - name: GENIE_SPACE_ID
-    valueFrom: genie-agent
+    value: "01f1a2dfca9c105eab89635b24ad21ae"
 
-  # SQL warehouse, used only for the four header statistics. The app still
-  # works without it; the metrics just show as dashes.
   - name: DATABRICKS_WAREHOUSE_ID
-    valueFrom: sql-warehouse
+    value: "84b04bfb53809a90"
 
-  # Unity Catalog location of the three views.
   - name: UC_CATALOG
     value: "workspace"
+
   - name: UC_SCHEMA
     value: "bushfire"
 
