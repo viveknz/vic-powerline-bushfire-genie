@@ -1,1 +1,17 @@
-command: ["streamlit", "run", "app/app.py"]
+command: ["streamlit", "run", "app.py"]
+
+env:
+  - name: GENIE_SPACE_ID
+    value: "01f1a2dfca9c105eab89635b24ad21ae"
+
+  - name: DATABRICKS_WAREHOUSE_ID
+    value: "84b04bfb53809a90"
+
+  - name: UC_CATALOG
+    value: "workspace"
+
+  - name: UC_SCHEMA
+    value: "bushfire"
+
+  - name: LOG_LEVEL
+    value: "INFO"
