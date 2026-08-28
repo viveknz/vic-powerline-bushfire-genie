@@ -41,36 +41,47 @@ MIN_ZOOM, MAX_ZOOM = 6.0, 11.0
 # Two ramps, because a colour that reads on a dark basemap disappears on a
 # light one. Both are sequential: this is a single variable increasing, and a
 # rainbow would imply categories that do not exist.
+#
+# The zero value matters as much as the top of the ramp. A cell with network
+# that has never burnt is a real, meaningful result — not an absence. It gets
+# a cool blue that is clearly a colour rather than a hole, so the only black
+# on the map means "no network here".
 RAMP_LIGHT = [
-    (0.0, (255, 245, 200)),
-    (10.0, (254, 217, 142)),
-    (25.0, (254, 173, 84)),
-    (50.0, (242, 119, 42)),
-    (75.0, (217, 72, 26)),
-    (100.0, (153, 26, 12)),
+    (0.0, (108, 148, 178)),
+    (0.1, (255, 241, 186)),
+    (10.0, (254, 214, 133)),
+    (25.0, (253, 168, 79)),
+    (50.0, (240, 114, 40)),
+    (75.0, (214, 68, 24)),
+    (100.0, (148, 24, 10)),
 ]
 
 RAMP_DARK = [
-    (0.0, (44, 52, 64)),
-    (10.0, (78, 66, 58)),
-    (25.0, (140, 78, 44)),
-    (50.0, (196, 96, 38)),
-    (75.0, (232, 122, 44)),
-    (100.0, (252, 176, 72)),
+    (0.0, (62, 96, 130)),
+    (0.1, (120, 104, 84)),
+    (10.0, (162, 108, 60)),
+    (25.0, (198, 118, 48)),
+    (50.0, (224, 140, 48)),
+    (75.0, (243, 172, 64)),
+    (100.0, (255, 214, 122)),
 ]
 
 # Carto basemaps, no API key required. Satellite would need a Mapbox token.
+#
+# Voyager is the default: it carries terrain, parks, water and town names, so
+# a reader who has never seen Victoria can place what they are looking at.
+# Positron was tried and is too washed out to be worth a slot.
 MAP_STYLES = {
+    "Colour": ("road", RAMP_LIGHT),
     "Dark": ("dark", RAMP_DARK),
-    "Light": ("light", RAMP_LIGHT),
 }
 
 
-def _colour(pct: Optional[float], ramp=None, alpha: int = 200) -> list[int]:
+def _colour(pct: Optional[float], ramp=None, alpha: int = 175) -> list[int]:
     """Interpolate a ramp. Missing values fade rather than reading as zero."""
     ramp = ramp or RAMP_DARK
     if pct is None or pd.isna(pct):
-        return [*ramp[0][1], 90]
+        return [120, 120, 120, 70]
 
     pct = max(0.0, min(100.0, float(pct)))
     for i in range(len(ramp) - 1):
@@ -94,9 +105,9 @@ def _deck(df: pd.DataFrame, tooltip: dict, zoom: float, lat: float, lon: float,
         extruded=False,
         get_hexagon="hex_id",
         get_fill_color="fill_color",
-        get_line_color=[255, 255, 255, 40],
+        get_line_color=[255, 255, 255, 25],
         line_width_min_pixels=0.5,
-        opacity=0.8,
+        opacity=0.78,
     )
     view_state = pdk.ViewState(
         latitude=lat,
@@ -122,6 +133,39 @@ def _deck(df: pd.DataFrame, tooltip: dict, zoom: float, lat: float, lon: float,
         tooltip=tooltip,
     )
 
+
+def _legend(ramp) -> str:
+    """Inline HTML legend. Deck.gl has no built-in one and a colour scale
+    without labels is just decoration."""
+    stops = [
+        (0.0, "Never burnt"),
+        (10.0, "10%"),
+        (25.0, "25%"),
+        (50.0, "50%"),
+        (75.0, "75%"),
+        (100.0, "100%"),
+    ]
+    swatches = []
+    for value, label in stops:
+        r, g, b, _ = _colour(value, ramp)
+        swatches.append(
+            f'<span style="display:inline-flex;align-items:center;gap:5px;'
+            f'margin-right:14px;">'
+            f'<span style="width:15px;height:15px;border-radius:3px;'
+            f'background:rgb({r},{g},{b});'
+            f'border:1px solid rgba(255,255,255,0.18);"></span>'
+            f'<span style="font-size:0.74rem;color:#9aa6ba;">{label}</span>'
+            f"</span>"
+        )
+    return (
+        '<div style="margin:6px 0 2px 0;">'
+        '<span style="font-size:0.74rem;color:#7b869a;margin-right:12px;">'
+        "Share of network length burnt by major bushfire:</span>"
+        + "".join(swatches)
+        + '<div style="font-size:0.72rem;color:#7b869a;margin-top:6px;">'
+        "Areas with no hexagon have no overhead network in this dataset."
+        "</div></div>"
+    )
 
 # --------------------------------------------------------------------------
 # Statewide map
@@ -158,6 +202,8 @@ def render_state_map(run_sql: Callable[[str], list[list[Any]]],
     }
 
     st.pydeck_chart(_deck(df, tooltip, VIC_ZOOM, VIC_LAT, VIC_LON, style=style))
+
+    st.markdown(_legend(ramp), unsafe_allow_html=True)
 
     st.caption(
         "The state of Victoria, in south-eastern Australia. Each hexagon is "
