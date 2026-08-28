@@ -317,6 +317,9 @@ def render_sidebar() -> None:
         banner = os.path.join(os.path.dirname(os.path.abspath(__file__)), "thumbnail.png")
         if os.path.exists(banner):
             st.image(banner, use_column_width=True)
+        st.markdown(map_view.australia_locator_svg(), unsafe_allow_html=True)
+        st.caption("Victoria is Australia's south-eastern mainland state.")
+
         st.subheader("About this app")
         st.markdown(
             "Overhead powerlines and bushfire have a two-way relationship. Lines "

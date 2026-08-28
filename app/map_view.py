@@ -315,3 +315,80 @@ def _frame(hexes: pd.DataFrame) -> tuple[float, float, float]:
     frame a subset reliably, and guessing wrong puts the camera in the ocean.
     Zooming in from a known-good view is the safer default."""
     return VIC_LAT, VIC_LON, VIC_ZOOM
+
+
+# --------------------------------------------------------------------------
+# Locator
+#
+# A reader in Chicago should not have to work out where Victoria is. This is a
+# simplified coastline on an equirectangular projection — accuracy beyond
+# "clearly Australia, clearly the south-eastern corner" is wasted at 220px.
+# --------------------------------------------------------------------------
+
+# (lon, lat) clockwise from the north-west cape
+AUSTRALIA = [
+    (113.2, -22.0), (114.1, -21.8), (115.0, -21.0), (117.0, -20.4),
+    (119.0, -20.0), (121.0, -19.5), (122.2, -18.0), (122.0, -16.5),
+    (123.5, -16.4), (124.5, -16.0), (125.5, -14.5), (127.5, -13.9),
+    (129.0, -15.0), (130.0, -12.5), (131.0, -12.2), (132.5, -12.0),
+    (133.5, -11.7), (135.0, -12.2), (136.0, -12.0), (136.5, -13.5),
+    (135.8, -15.0), (137.5, -16.0), (139.5, -17.5), (140.8, -17.5),
+    (141.5, -15.0), (141.6, -12.5), (142.5, -10.7), (143.5, -14.0),
+    (145.5, -15.0), (146.5, -19.0), (149.0, -21.0), (150.0, -22.5),
+    (152.5, -25.0), (153.5, -28.0), (153.0, -31.0), (151.0, -33.5),
+    (150.0, -37.0), (148.0, -37.8), (146.5, -38.8), (145.0, -38.5),
+    (144.5, -38.4), (143.0, -38.8), (141.0, -38.4), (139.5, -37.0),
+    (138.0, -35.0), (137.5, -35.5), (136.0, -35.0), (135.0, -34.7),
+    (134.0, -32.7), (132.0, -32.0), (129.0, -31.7), (126.0, -32.3),
+    (123.5, -34.0), (120.0, -34.0), (118.0, -35.1), (115.5, -34.5),
+    (115.0, -33.5), (115.7, -31.5), (114.8, -29.0), (114.0, -27.0),
+    (113.5, -24.5),
+]
+
+# Murray River border along the north, then the coast back west
+VICTORIA = [
+    (141.0, -34.15), (142.5, -34.8), (143.5, -35.4), (144.6, -35.9),
+    (146.0, -36.0), (147.3, -36.0), (148.2, -36.5), (149.9, -37.5),
+    (148.0, -37.8), (146.5, -38.8), (145.4, -38.4), (144.9, -38.5),
+    (144.5, -38.1), (143.5, -38.9), (142.0, -38.4), (141.0, -38.4),
+]
+
+TASMANIA = [
+    (144.7, -40.7), (146.0, -41.1), (148.3, -40.9), (148.3, -42.9),
+    (147.4, -43.1), (146.2, -43.6), (145.2, -42.2), (144.7, -40.7),
+]
+
+LON_MIN, LON_MAX = 112.0, 155.0
+LAT_MIN, LAT_MAX = -44.5, -10.0
+
+W, H = 220, 176  # locator only
+PAD = 6
+
+
+def _loc_project(lon: float, lat: float) -> tuple[float, float]:
+    x = PAD + (lon - LON_MIN) / (LON_MAX - LON_MIN) * (W - 2 * PAD)
+    y = PAD + (LAT_MAX - lat) / (LAT_MAX - LAT_MIN) * (H - 2 * PAD)
+    return round(x, 1), round(y, 1)
+
+
+def _loc_path(points) -> str:
+    d = " ".join(
+        f"{'M' if i == 0 else 'L'}{x},{y}"
+        for i, (x, y) in enumerate(_loc_project(lon, lat) for lon, lat in points)
+    )
+    return d + " Z"
+
+
+def australia_locator_svg() -> str:
+    return f"""<svg viewBox="0 0 {W} {H}" xmlns="http://www.w3.org/2000/svg" \
+width="100%" role="img" aria-label="Map of Australia with Victoria highlighted">
+  <rect width="{W}" height="{H}" rx="8" fill="#141a24"/>
+  <path d="{_loc_path(AUSTRALIA)}" fill="#2a323f" stroke="#3d4757" stroke-width="1"/>
+  <path d="{_loc_path(TASMANIA)}" fill="#2a323f" stroke="#3d4757" stroke-width="1"/>
+  <path d="{_loc_path(VICTORIA)}" fill="#e07a2c" stroke="#ffb066" stroke-width="1.2"/>
+  <text x="{_loc_project(143.8, -32.2)[0]}" y="{_loc_project(143.8, -32.2)[1]}" \
+fill="#f0913f" font-size="10" font-weight="700" text-anchor="middle" \
+font-family="sans-serif">VICTORIA</text>
+</svg>"""
+
+
