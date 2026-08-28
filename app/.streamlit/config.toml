@@ -1,0 +1,19 @@
+# Streamlit theme. Without this, the app inherits a dark default which fights
+# the Carto Voyager basemap and makes the whole page read as a black slab.
+#
+# The palette is taken from the thumbnail: warm ember accent, warm off-white
+# paper, near-black text.
+
+[theme]
+base = "light"
+primaryColor = "#d9481a"
+backgroundColor = "#fdfcfa"
+secondaryBackgroundColor = "#f4efe8"
+textColor = "#1a1d23"
+font = "sans serif"
+
+[server]
+enableStaticServing = true
+
+[browser]
+gatherUsageStats = false

@@ -62,10 +62,36 @@ st.markdown(
     """
     <style>
       .block-container { padding-top: 2rem; max-width: 1200px; }
+
       div[data-testid="stMetricValue"] { font-size: 1.6rem; }
       div[data-testid="stMetricLabel"] { font-size: 0.8rem; opacity: 0.75; }
+
       .stChatMessage { background: transparent; }
       code { font-size: 0.85rem; }
+
+      /* Streamlit ships a chevron for the collapsed sidebar. Swap it for a
+         hamburger, which people recognise without thinking about it. */
+      div[data-testid="collapsedControl"] button svg,
+      div[data-testid="stSidebarCollapsedControl"] button svg { display: none; }
+
+      div[data-testid="collapsedControl"] button::after,
+      div[data-testid="stSidebarCollapsedControl"] button::after {
+        content: "\2630";
+        font-size: 1.35rem;
+        line-height: 1;
+        color: #1a1d23;
+      }
+
+      div[data-testid="collapsedControl"] button,
+      div[data-testid="stSidebarCollapsedControl"] button {
+        background: #f4efe8;
+        border: 1px solid #e2d9cc;
+        border-radius: 8px;
+        padding: 0.35rem 0.6rem;
+      }
+
+      /* Give the map room to breathe */
+      iframe[title="st.iframe"], .stDeckGlJsonChart { border-radius: 10px; }
     </style>
     """,
     unsafe_allow_html=True,
