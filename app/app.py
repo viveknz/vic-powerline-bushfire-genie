@@ -57,7 +57,7 @@ st.set_page_config(
     page_title="Victorian Powerline Bushfire Exposure",
     page_icon="🔥",
     layout="wide",
-    initial_sidebar_state="collapsed",
+    initial_sidebar_state="expanded",
 )
 
 st.markdown(
@@ -98,11 +98,35 @@ st.markdown(
       }
 
       div[data-testid="collapsedControl"] button,
-      div[data-testid="stSidebarCollapsedControl"] button {
+      div[data-testid="stSidebarCollapsedControl"] button,
+      div[data-testid="stSidebarCollapseButton"] button {
         background: #1a1f2b;
         border: 1px solid #2c3444;
         border-radius: 8px;
-        padding: 0.3rem 0.55rem;
+        width: 2.3rem;
+        height: 2.3rem;
+        min-width: 2.3rem;
+        min-height: 2.3rem;
+        padding: 0;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        transition: none;
+      }
+
+      /* Streamlit swaps the icon on hover, which makes a button with a
+         replaced glyph jitter. Freeze everything that could move. */
+      div[data-testid="collapsedControl"] button:hover,
+      div[data-testid="stSidebarCollapsedControl"] button:hover,
+      div[data-testid="stSidebarCollapseButton"] button:hover {
+        background: #232a38;
+        border-color: #e07a2c;
+        transform: none;
+      }
+      div[data-testid="collapsedControl"] button *,
+      div[data-testid="stSidebarCollapsedControl"] button *,
+      div[data-testid="stSidebarCollapseButton"] button * {
+        display: none !important;
       }
 
       /* Give the map room to breathe */
