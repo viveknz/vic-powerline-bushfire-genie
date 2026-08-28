@@ -159,6 +159,34 @@ st.markdown(
         margin-top: -0.4rem;
       }
       .credit-line b { color: #9aa6ba; font-weight: 600; }
+
+      /* Streamlit fades the collapse button in on hover. Pin it visible so the
+         control is discoverable without hunting for it. */
+      div[data-testid="stSidebarCollapseButton"],
+      div[data-testid="stSidebarCollapseButton"] button,
+      div[data-testid="collapsedControl"],
+      div[data-testid="stSidebarCollapsedControl"] {
+        opacity: 1 !important;
+        visibility: visible !important;
+        pointer-events: auto !important;
+      }
+      section[data-testid="stSidebar"] div[data-testid="stSidebarCollapseButton"] {
+        display: flex !important;
+      }
+
+      /* Images get a hover overlay and a fullscreen button, which makes the
+         sidebar banner jump. Neither is wanted here. */
+      div[data-testid="stImage"],
+      div[data-testid="stImage"] img {
+        transform: none !important;
+        transition: none !important;
+      }
+      div[data-testid="stImage"] button,
+      button[data-testid="StyledFullScreenButton"],
+      div[data-testid="stFullScreenFrame"] button {
+        display: none !important;
+      }
+      div[data-testid="stImage"] img { border-radius: 8px; }
     </style>
     """,
     unsafe_allow_html=True,
