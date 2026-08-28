@@ -44,6 +44,14 @@ CATALOG = os.environ.get("UC_CATALOG", "workspace")
 SCHEMA = os.environ.get("UC_SCHEMA", "bushfire")
 
 AUTHOR = os.environ.get("APP_AUTHOR", "Vivek")
+REPO_URL = os.environ.get(
+    "REPO_URL", "https://github.com/viveknz/vic-powerline-bushfire-genie"
+)
+CHALLENGE_URL = os.environ.get(
+    "CHALLENGE_URL",
+    "https://community.databricks.com/t5/learning-events/"
+    "databricks-community-contest-genie-powered-app-challenge/ev-p/165825",
+)
 
 SUGGESTED_QUESTIONS = [
     "Which councils have the most bushfire-exposed powerline network?",
@@ -309,6 +317,27 @@ def render_sidebar() -> None:
         banner = os.path.join(os.path.dirname(os.path.abspath(__file__)), "thumbnail.png")
         if os.path.exists(banner):
             st.image(banner, use_column_width=True)
+        st.subheader("About this app")
+        st.markdown(
+            "Overhead powerlines and bushfire have a two-way relationship. Lines "
+            "run through country that burns, and lines start fires when "
+            "vegetation contacts them. Victoria regulates this through electric "
+            "line clearance obligations, and every distribution business runs a "
+            "vegetation management program against it.\n\n"
+            "Those programs have a budgeting problem: there is more network than "
+            "there is inspection money. Deciding which spans get attention needs "
+            "a view of which parts of the network sit in country with a real "
+            "fire history. The data to answer that is public. It has just never "
+            "been joined up.\n\n"
+            "This app joins it, and puts a natural-language interface in front."
+        )
+
+        st.markdown(
+            f"[Source code and notebooks]({REPO_URL}) &nbsp;·&nbsp; "
+            f"[Databricks Genie App Challenge]({CHALLENGE_URL})"
+        )
+
+        st.divider()
         st.subheader("How this works")
         st.markdown(
             "Every question goes to a **Genie Agent** which writes SQL against "
