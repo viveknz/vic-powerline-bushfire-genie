@@ -232,7 +232,7 @@ def render_sidebar() -> None:
             )
 
         st.divider()
-        if st.button("Clear conversation", width="stretch"):
+        if st.button("Clear conversation", use_container_width=True):
             st.session_state.messages = []
             st.session_state.conversation_id = None
             st.rerun()
@@ -290,7 +290,7 @@ def render_result(turn: GenieTurn, key: str) -> None:
     if chart:
         tab_table, tab_chart = st.tabs(["Table", "Chart"])
         with tab_table:
-            st.dataframe(df, width="stretch", hide_index=True)
+            st.dataframe(df, use_container_width=True, hide_index=True)
         with tab_chart:
             try:
                 indexed = df.set_index(df.columns[0])
@@ -303,7 +303,7 @@ def render_result(turn: GenieTurn, key: str) -> None:
                 log.exception("Chart rendering failed")
                 st.info("Could not chart this result.")
     else:
-        st.dataframe(df, width="stretch", hide_index=True)
+        st.dataframe(df, use_container_width=True, hide_index=True)
 
     footer = f"{turn.row_count:,} rows"
     if turn.truncated or len(turn.rows) < turn.row_count:
@@ -408,7 +408,7 @@ def main() -> None:
         st.markdown("**Try one of these**")
         cols = st.columns(2)
         for i, question in enumerate(SUGGESTED_QUESTIONS):
-            if cols[i % 2].button(question, key=f"sq_{i}", width="stretch"):
+            if cols[i % 2].button(question, key=f"sq_{i}", use_container_width=True):
                 pending = question
         st.caption(
             "Or ask your own. Follow-up questions keep the thread, so "
