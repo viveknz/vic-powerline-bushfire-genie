@@ -366,23 +366,6 @@ def render_header() -> None:
     st.divider()
 
 
-def render_glossary() -> None:
-    """Terms a reader outside the industry will not know.
-
-    SWER in particular carries the app's headline finding, and nobody outside
-    electricity distribution has heard of it.
-    """
-    body = "\n\n".join(f"**{term}**  \n{text}" for term, text in GLOSSARY)
-
-    popover = getattr(st, "popover", None)
-    if popover is not None:
-        with popover("Data glossary", use_container_width=True):
-            st.markdown(body)
-    else:
-        with st.expander("Data glossary"):
-            st.markdown(body)
-
-
 def render_sidebar() -> None:
     """The semantic layer is 90% of the work and 0% visible. This fixes that."""
     with st.sidebar:
@@ -392,27 +375,6 @@ def render_sidebar() -> None:
         st.markdown(map_view.australia_locator_svg(), unsafe_allow_html=True)
         st.caption("Victoria is Australia's south-eastern mainland state.")
 
-        st.subheader("About this app")
-        st.markdown(
-            "Overhead powerlines and bushfire have a two-way relationship. Lines "
-            "run through country that burns, and lines start fires when "
-            "vegetation contacts them. Victoria regulates this through electric "
-            "line clearance obligations, and every distribution business runs a "
-            "vegetation management program against it.\n\n"
-            "Those programs have a budgeting problem: there is more network than "
-            "there is inspection money. Deciding which spans get attention needs "
-            "a view of which parts of the network sit in country with a real "
-            "fire history. The data to answer that is public. It has just never "
-            "been joined up.\n\n"
-            "This app joins it, and puts a natural-language interface in front."
-        )
-
-        st.markdown(
-            f"[Source code and notebooks]({REPO_URL}) &nbsp;·&nbsp; "
-            f"[Databricks Genie App Challenge]({CHALLENGE_URL})"
-        )
-
-        st.divider()
         st.subheader("How this works")
         st.markdown(
             "Every question goes to a **Genie Agent**, which writes the SQL "
@@ -488,6 +450,9 @@ def render_sidebar() -> None:
                 """
             )
 
+
+        st.divider()
+
         with st.expander("Known limits"):
             st.markdown(
                 """
@@ -497,6 +462,26 @@ def render_sidebar() -> None:
                   fires undercount councils affected.
                 - Pre-1980 records lack region, district and cause.
                 """
+            )
+
+        with st.expander("About this app"):
+            st.markdown(
+                "Overhead powerlines and bushfire have a two-way relationship. "
+                "Lines run through country that burns, and lines start fires "
+                "when vegetation contacts them. Victoria regulates this through "
+                "electric line clearance obligations, and every distribution "
+                "business runs a vegetation management program against it.\n\n"
+                "Those programs have a budgeting problem: there is more network "
+                "than there is inspection money. Deciding which spans get "
+                "attention needs a view of which parts of the network sit in "
+                "country with a real fire history. The data to answer that is "
+                "public. It has just never been joined up.\n\n"
+                "This app joins it, and puts a natural-language interface in "
+                "front."
+            )
+            st.markdown(
+                f"[Source code and notebooks]({REPO_URL}) &nbsp;·&nbsp; "
+                f"[Databricks Genie App Challenge]({CHALLENGE_URL})"
             )
 
         with st.expander("Data glossary"):
@@ -659,7 +644,6 @@ def ask_genie(question: str) -> None:
         except GenieError as exc:
             log.exception("Genie call failed")
             status_box.update(label="Failed", state="error")
-            st.error(f"Genie call failed: {exc}")
             st.session_state.messages.append(
                 {"role": "assistant", "content": f"Error: {exc}", "turn": None}
             )
@@ -667,25 +651,14 @@ def ask_genie(question: str) -> None:
         except Exception as exc:  # noqa: BLE001 - never fail silently
             log.exception("Unexpected error while asking Genie")
             status_box.update(label="Failed", state="error")
-            st.error(f"Unexpected error: {type(exc).__name__}: {exc}")
-            st.exception(exc)
             st.session_state.messages.append(
                 {"role": "assistant", "content": f"Error: {exc}", "turn": None}
             )
             return
 
         status_box.update(label=f"Answered in {turn.elapsed_seconds}s", state="complete")
-        st.session_state.conversation_id = turn.conversation_id
 
-        if turn.follow_up:
-            st.info(turn.follow_up)
-        if turn.text:
-            st.markdown(turn.text)
-        if turn.error and not turn.text:
-            st.warning(turn.error)
-
-        render_result(turn, key=turn.message_id)
-
+    st.session_state.conversation_id = turn.conversation_id
     st.session_state.messages.append(
         {"role": "assistant", "content": turn.text or turn.error or "", "turn": turn}
     )
@@ -741,13 +714,15 @@ def main() -> None:
             for i, question in enumerate(SUGGESTED_QUESTIONS):
                 if st.button(question, key=f"sq_{i}", use_container_width=True):
                     pending = question
-            st.caption(
-                "Or type your own below. Follow-ups keep the thread, so "
-                "\"just the top three\" works after any answer."
-            )
-
-            render_glossary()
+            st.caption("Or type your own below. Follow-ups keep the thread.")
     else:
+        with st.expander("Show the statewide map", expanded=False):
+            try:
+                map_view.render_state_map(run_sql, CATALOG, SCHEMA)
+            except Exception:
+                log.exception("State map failed")
+                st.info("Map unavailable.")
+
         replay_history()
 
     typed = st.chat_input("Ask about bushfire exposure on the network…")
@@ -756,6 +731,10 @@ def main() -> None:
 
     if pending:
         ask_genie(pending)
+        # Redraw once so the answer is rendered from history rather than
+        # inline. Two rendering paths for the same turn is how the second
+        # question ended up completing server-side without appearing.
+        st.rerun()
 
 
 if __name__ == "__main__":
