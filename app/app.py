@@ -695,34 +695,31 @@ def main() -> None:
 
     pending: Optional[str] = None
 
-    if not st.session_state.messages:
-        map_col, ask_col = st.columns([3, 2], gap="large")
+    # The map and the question list stay put whether or not a conversation is
+    # under way. Swapping the layout after the first question made the page
+    # feel like it had lost something.
+    map_col, ask_col = st.columns([3, 2], gap="large")
 
-        with map_col:
-            try:
-                map_view.render_state_map(run_sql, CATALOG, SCHEMA)
-            except Exception:
-                log.exception("State map failed")
-                st.info("Map unavailable. Ask a question on the right.")
+    with map_col:
+        try:
+            map_view.render_state_map(run_sql, CATALOG, SCHEMA)
+        except Exception:
+            log.exception("State map failed")
+            st.info("Map unavailable. Ask a question on the right.")
 
-        with ask_col:
-            st.markdown("#### Ask the data a question")
-            st.caption(
-                "Genie writes the SQL against three curated views. Nothing here "
-                "is pre-built."
-            )
-            for i, question in enumerate(SUGGESTED_QUESTIONS):
-                if st.button(question, key=f"sq_{i}", use_container_width=True):
-                    pending = question
-            st.caption("Or type your own below. Follow-ups keep the thread.")
-    else:
-        with st.expander("Show the statewide map", expanded=False):
-            try:
-                map_view.render_state_map(run_sql, CATALOG, SCHEMA)
-            except Exception:
-                log.exception("State map failed")
-                st.info("Map unavailable.")
+    with ask_col:
+        st.markdown("#### Ask the data a question")
+        st.caption(
+            "Genie writes the SQL against three curated views. Nothing here "
+            "is pre-built."
+        )
+        for i, question in enumerate(SUGGESTED_QUESTIONS):
+            if st.button(question, key=f"sq_{i}", use_container_width=True):
+                pending = question
+        st.caption("Or type your own below. Follow-ups keep the thread.")
 
+    if st.session_state.messages:
+        st.divider()
         replay_history()
 
     typed = st.chat_input("Ask about bushfire exposure on the network…")
