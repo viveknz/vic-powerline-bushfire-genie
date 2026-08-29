@@ -175,8 +175,14 @@ def _legend(ramp) -> str:
 def render_state_map(run_sql: Callable[[str], list[list[Any]]],
                      catalog: str, schema: str) -> bool:
     """Draw the whole network. Returns False if the data is unavailable."""
-    df = _load_state_hexes(run_sql, catalog, schema)
+    with st.spinner("Loading the Victorian network…"):
+        df = _load_state_hexes(run_sql, catalog, schema)
+
     if df.empty:
+        st.info(
+            "The map could not load. This usually means the SQL warehouse is "
+            "still starting — try again in a moment."
+        )
         return False
 
     st.markdown(

@@ -342,7 +342,9 @@ def render_header() -> None:
         "Australia. Fire history 1903 to 2026."
     )
 
-    stats = load_header_stats()
+    with st.spinner("Waking the SQL warehouse and loading the network…"):
+        stats = load_header_stats()
+
     c1, c2, c3, c4 = st.columns(4)
     c1.metric("Line segments", f"{stats['segments']:,}" if stats["segments"] else "—")
     c2.metric("Fires on record", f"{stats['fires']:,}" if stats["fires"] else "—")
