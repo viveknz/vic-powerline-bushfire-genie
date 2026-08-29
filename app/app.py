@@ -490,11 +490,6 @@ def render_sidebar() -> None:
             )
 
         st.divider()
-        if st.button("Clear conversation", use_container_width=True):
-            st.session_state.messages = []
-            st.session_state.conversation_id = None
-            st.rerun()
-
         st.caption(
             "Source: Vicmap Infrastructure and Fire History Scar, "
             "State Government of Victoria (DEECA), CC BY 4.0."
@@ -695,31 +690,40 @@ def main() -> None:
 
     pending: Optional[str] = None
 
-    # The map and the question list stay put whether or not a conversation is
-    # under way. Swapping the layout after the first question made the page
-    # feel like it had lost something.
-    map_col, ask_col = st.columns([3, 2], gap="large")
+    # Map and starter questions live in one collapsible block. Collapsing it
+    # gives the conversation the full page once someone is a few questions in,
+    # without the layout changing on its own.
+    with st.expander("Explore the network", expanded=True):
+        map_col, ask_col = st.columns([3, 2], gap="large")
 
-    with map_col:
-        try:
-            map_view.render_state_map(run_sql, CATALOG, SCHEMA)
-        except Exception:
-            log.exception("State map failed")
-            st.info("Map unavailable. Ask a question on the right.")
+        with map_col:
+            try:
+                map_view.render_state_map(run_sql, CATALOG, SCHEMA)
+            except Exception:
+                log.exception("State map failed")
+                st.info("Map unavailable. Ask a question on the right.")
 
-    with ask_col:
-        st.markdown("#### Ask the data a question")
-        st.caption(
-            "Genie writes the SQL against three curated views. Nothing here "
-            "is pre-built."
-        )
-        for i, question in enumerate(SUGGESTED_QUESTIONS):
-            if st.button(question, key=f"sq_{i}", use_container_width=True):
-                pending = question
-        st.caption("Or type your own below. Follow-ups keep the thread.")
+        with ask_col:
+            st.markdown("#### Ask the data a question")
+            st.caption(
+                "Genie writes the SQL against three curated views. Nothing here "
+                "is pre-built."
+            )
+            for i, question in enumerate(SUGGESTED_QUESTIONS):
+                if st.button(question, key=f"sq_{i}", use_container_width=True):
+                    pending = question
+            st.caption("Or type your own below. Follow-ups keep the thread.")
 
     if st.session_state.messages:
         st.divider()
+        head, clear = st.columns([5, 1])
+        head.markdown("#### Conversation")
+        if clear.button("Clear", use_container_width=True,
+                        help="Start a new conversation"):
+            st.session_state.messages = []
+            st.session_state.conversation_id = None
+            st.rerun()
+
         replay_history()
 
     typed = st.chat_input("Ask about bushfire exposure on the network…")

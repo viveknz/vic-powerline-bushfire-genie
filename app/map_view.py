@@ -381,7 +381,7 @@ def _loc_path(points) -> str:
 
 def australia_locator_svg() -> str:
     return f"""<svg viewBox="0 0 {W} {H}" xmlns="http://www.w3.org/2000/svg" \
-width="100%" role="img" aria-label="Map of Australia with Victoria highlighted">
+width="50%" role="img" aria-label="Map of Australia with Victoria highlighted">
   <rect width="{W}" height="{H}" rx="8" fill="#141a24"/>
   <path d="{_loc_path(AUSTRALIA)}" fill="#2a323f" stroke="#3d4757" stroke-width="1"/>
   <path d="{_loc_path(TASMANIA)}" fill="#2a323f" stroke="#3d4757" stroke-width="1"/>
