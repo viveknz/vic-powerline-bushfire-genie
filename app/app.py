@@ -53,6 +53,61 @@ CHALLENGE_URL = os.environ.get(
     "databricks-community-contest-genie-powered-app-challenge/ev-p/165825",
 )
 
+GLOSSARY = [
+    (
+        "SWER line",
+        "Single Wire Earth Return. A cheap way to electrify remote farmland: "
+        "one wire instead of two or three, using the earth itself as the "
+        "return path. Long spans, few poles, mostly through bush. Victoria has "
+        "26,646 of these segments and they are measurably more fire-exposed "
+        "than the rest of the high voltage network.",
+    ),
+    (
+        "Segment",
+        "One stretch of powerline as published in the state's mapping data. "
+        "There is no standard length — a segment may be 200 metres of suburban "
+        "line or 100 kilometres of transmission route. That is why exposure is "
+        "also given as a percentage of each segment's own length.",
+    ),
+    (
+        "High voltage vs low voltage",
+        "High voltage is the network that carries power between towns and along "
+        "rural roads, typically 22kV or 12.7kV. Low voltage is the last stretch "
+        "into houses. Low voltage is excluded here: it is mostly urban, short, "
+        "and often underground, so it carries little bushfire risk.",
+    ),
+    (
+        "Fire season",
+        "July to June, labelled by the year it ends. Season 2020 covers the "
+        "summer of 2019–20, which is the season often called Black Summer.",
+    ),
+    (
+        "Major bushfire",
+        "A bushfire of 1,000 hectares or more. The distinction matters: without "
+        "it, six small grassfires on Melbourne's fringe rank alongside the "
+        "campaign fires that burn through Gippsland.",
+    ),
+    (
+        "Planned burn",
+        "A fire lit deliberately by the fire agency to reduce fuel before "
+        "summer. Most fires in the record are these. They indicate active "
+        "management, not risk, and are counted separately throughout.",
+    ),
+    (
+        "Exposure band",
+        "How many major bushfires have come near a stretch of line. "
+        "None (never), Low (one), Moderate (two or three), High (four or "
+        "more). 301 segments are High.",
+    ),
+    (
+        "H3 hexagons",
+        "The method used to work out which fires came near which powerlines. "
+        "Both are converted into a grid of hexagonal cells about 460 metres "
+        "across, and anything sharing a cell is treated as near. It is an "
+        "approximation, and about as precise as the source data deserves.",
+    ),
+]
+
 SUGGESTED_QUESTIONS = [
     "Which councils have the most bushfire-exposed powerline network?",
     "Are SWER lines more exposed to bushfire than other high voltage lines?",
@@ -311,6 +366,23 @@ def render_header() -> None:
     st.divider()
 
 
+def render_glossary() -> None:
+    """Terms a reader outside the industry will not know.
+
+    SWER in particular carries the app's headline finding, and nobody outside
+    electricity distribution has heard of it.
+    """
+    body = "\n\n".join(f"**{term}**  \n{text}" for term, text in GLOSSARY)
+
+    popover = getattr(st, "popover", None)
+    if popover is not None:
+        with popover("Data glossary", use_container_width=True):
+            st.markdown(body)
+    else:
+        with st.expander("Data glossary"):
+            st.markdown(body)
+
+
 def render_sidebar() -> None:
     """The semantic layer is 90% of the work and 0% visible. This fixes that."""
     with st.sidebar:
@@ -343,9 +415,19 @@ def render_sidebar() -> None:
         st.divider()
         st.subheader("How this works")
         st.markdown(
-            "Every question goes to a **Genie Agent** which writes SQL against "
-            "three curated views. No question is pre-built — ask anything the "
-            "data can answer."
+            "Every question goes to a **Genie Agent**, which writes the SQL "
+            "itself. Nothing here is a pre-built report — ask anything the data "
+            "can answer."
+        )
+        st.markdown(
+            """
+            It has three tables to work with:
+
+            - **The network** — one row for each stretch of powerline, with what
+              has burnt near it
+            - **The fires** — one row for each fire since 1903
+            - **The link between them** — which fires touched which stretches
+            """
         )
 
         with st.expander("Where the data comes from"):
@@ -367,20 +449,42 @@ def render_sidebar() -> None:
         with st.expander("What Genie has been taught"):
             st.markdown(
                 """
-                The data has traps. Genie is instructed around each of them:
+                Public data has traps in it. Six of them would produce answers
+                that look right and are wrong, so Genie is told about each one.
 
-                - **Seasons run July to June.** Season 2020 is the 2019/20 summer.
-                - **Planned burns are not bushfires.** They outnumber bushfires
-                  and indicate fuel management, not risk.
-                - **Fires are mapped as many polygons.** One fire can be 868
-                  fragments, so everything counts distinct fires.
-                - **Areas cannot be summed.** Polygons overlap; a total would
-                  roughly double count.
-                - **Cause is known for ~3% of fires.** Any cause answer is a
-                  floor, not a total.
-                - **Segments vary from 200 m to 100 km.** Raw counts favour long
-                  transmission lines, so exposure is also expressed as a
-                  percentage of segment length.
+                **A fire season is not a calendar year.** Victorian fire seasons
+                run July to June, and the record labels each one by the year it
+                ends. Season 2020 means the summer of 2019–20. Ask about "the
+                2019 fires" and Genie checks which you mean.
+
+                **Planned burns are not bushfires.** Most fires in the record
+                are controlled burns lit deliberately by the fire agency to
+                reduce fuel. Counting them alongside bushfires would measure
+                fire *management* and call it fire *risk*. They are kept apart.
+
+                **One fire is drawn as many shapes.** When a fire is mapped, the
+                agency records it as dozens or hundreds of separate patches —
+                one large fire in 2019–20 has 868 of them. Counting shapes would
+                say a single fire happened 868 times. Everything counts distinct
+                fires instead.
+
+                **Burnt areas cannot be added up.** Those shapes overlap each
+                other, so adding their areas roughly doubles the real figure. If
+                you ask for total hectares burnt, Genie will explain why it
+                cannot give you one.
+
+                **Most fires have no recorded cause.** Only about 3 in every 100
+                fires were ever investigated closely enough to record what
+                started them. So when Genie says eight fires were caused by
+                powerlines, that means eight *confirmed* — the real number is
+                higher, and nobody knows by how much.
+
+                **Powerline segments come in wildly different lengths.** The
+                network is published as segments, and one may be 200 metres of
+                suburban line while another is 100 kilometres of transmission
+                route. A long line crosses more fires simply by being long. So
+                exposure is also measured as a *percentage of each segment's own
+                length*, which compares fairly regardless of size.
                 """
             )
 
@@ -393,6 +497,11 @@ def render_sidebar() -> None:
                   fires undercount councils affected.
                 - Pre-1980 records lack region, district and cause.
                 """
+            )
+
+        with st.expander("Data glossary"):
+            st.markdown(
+                "\n\n".join(f"**{t}**  \n{d}" for t, d in GLOSSARY)
             )
 
         st.divider()
@@ -434,6 +543,25 @@ def pick_chart(df: pd.DataFrame) -> Optional[str]:
     return "bar"
 
 
+def _is_year_column(name: str, values: pd.Series) -> bool:
+    """A year is numeric but not a quantity. Formatting it with a thousands
+    separator turns 2020 into "2,020", which looks like a bug because it is
+    one."""
+    lowered = name.lower()
+    if any(k in lowered for k in ("season", "year")):
+        return True
+    # Catch columns Genie names something else but which hold only plausible
+    # years, e.g. a bare "burnt" column of 1903-2026 values.
+    numeric = values.dropna()
+    if numeric.empty:
+        return False
+    return bool(
+        (numeric % 1 == 0).all()
+        and numeric.between(1800, 2100).all()
+        and numeric.nunique() > 1
+    )
+
+
 def render_result(turn: GenieTurn, key: str) -> None:
     """Everything below the prose answer: SQL, table, chart, download."""
     if turn.sql:
@@ -448,10 +576,16 @@ def render_result(turn: GenieTurn, key: str) -> None:
     df = pd.DataFrame(rows_to_records(turn))
 
     # Values arrive as strings; convert what is genuinely numeric so charts
-    # and sorting behave.
+    # and sorting behave. Years and seasons are the exception: they are
+    # numeric but not quantities, and Streamlit renders them with a thousands
+    # separator, so 2020 becomes "2,020".
     for col in df.columns:
         converted = pd.to_numeric(df[col], errors="coerce")
-        if converted.notna().all():
+        if not converted.notna().all():
+            continue
+        if _is_year_column(str(col), converted):
+            df[col] = converted.astype("Int64").astype(str)
+        else:
             df[col] = converted
 
     chart = pick_chart(df)
@@ -611,6 +745,8 @@ def main() -> None:
                 "Or type your own below. Follow-ups keep the thread, so "
                 "\"just the top three\" works after any answer."
             )
+
+            render_glossary()
     else:
         replay_history()
 
