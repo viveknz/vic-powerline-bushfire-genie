@@ -196,15 +196,36 @@ def render_state_map(run_sql: Callable[[str], list[list[Any]]],
 
     df["fill_color"] = df["avg_pct_extent_burnt"].apply(lambda v: _colour(v, ramp))
 
+    # A hexagon is about 8.5 km across and can straddle a council boundary, so
+    # the name is the dominant council, not the only one. Say so.
+    df["lga_label"] = df["example_lga"].fillna("Unknown") + " and around"
+
+    # Deck.gl tooltips are string templates with no conditional logic, so the
+    # singular/plural has to be resolved here rather than in the template.
+    def _repeat_label(n) -> str:
+        try:
+            n = int(n)
+        except (TypeError, ValueError):
+            return "no stretches burnt four times or more"
+        if n == 0:
+            return "no stretches burnt four times or more"
+        if n == 1:
+            return "1 stretch burnt four times or more"
+        return f"{n} stretches burnt four times or more"
+
+    df["repeat_label"] = df["high_exposure_segments"].apply(_repeat_label)
+
     tooltip = {
         "html": (
-            "<b>{example_lga}</b><br/>"
-            "{segments} segments &middot; {swer_segments} SWER<br/>"
-            "{avg_pct_extent_burnt}% of network length in major fire ground<br/>"
-            "{high_exposure_segments} high-exposure segments"
+            "<b>{lga_label}</b><br/>"
+            "{segments} powerline segments &middot; {swer_segments} SWER<br/>"
+            "{avg_pct_extent_burnt}% of it has burnt in a major bushfire "
+            "(1,000 ha or larger)<br/>"
+            "{repeat_label}"
         ),
         "style": {"backgroundColor": "#11151c", "color": "#e8edf5",
-                  "fontSize": "12px", "borderRadius": "6px"},
+                  "fontSize": "12px", "borderRadius": "6px",
+                  "maxWidth": "260px"},
     }
 
     st.pydeck_chart(_deck(df, tooltip, VIC_ZOOM, VIC_LAT, VIC_LON, style=style))
@@ -279,8 +300,12 @@ def render_result_map(df: pd.DataFrame, run_sql: Callable[[str], list[list[Any]]
     hexes["fill_color"] = [[217, 72, 26, 215]] * len(hexes)
 
     lat, lon, zoom = _frame(hexes)
+    hexes["count_label"] = hexes["count"].apply(
+        lambda n: "1 segment here" if int(n) == 1 else f"{int(n)} segments here"
+    )
+
     tooltip = {
-        "html": "<b>{count} segment(s)</b> in this cell",
+        "html": "<b>{count_label}</b>",
         "style": {"backgroundColor": "#11151c", "color": "#e8edf5",
                   "fontSize": "12px", "borderRadius": "6px"},
     }

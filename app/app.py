@@ -351,12 +351,22 @@ def render_header() -> None:
     c3.metric(
         "High exposure segments",
         f"{stats['high']:,}" if stats["high"] is not None else "—",
-        help="Segments near four or more major bushfires (1,000 ha or larger)",
+        help=(
+            "A segment counts as high exposure once four or more separate major "
+            "bushfires have come near it. Major means 1,000 hectares or larger. "
+            "These are places where fire keeps returning, not places that burnt "
+            "once."
+        ),
     )
     c4.metric(
         "Powerline-caused fires",
         f"{stats['powerline']:,}" if stats["powerline"] is not None else "—",
-        help="Cause is investigated for only about 3% of fires, so this is a floor",
+        help=(
+            "Only about 3 in every 100 fires were ever investigated closely "
+            "enough to record what started them. So eight is the number of "
+            "confirmed powerline-caused fires. The real figure is higher, and "
+            "nobody knows by how much."
+        ),
     )
 
     st.markdown(
